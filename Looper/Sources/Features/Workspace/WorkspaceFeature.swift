@@ -24,6 +24,7 @@ struct WorkspaceFeature {
         var composer: WorkspaceDraft = .init()
         var isComposerPresented = false
         var isCreatingWorkspace = false
+        var isSavingPreferences = false
         var removingWorkspaceIDs: Set<CodingWorkspace.ID> = []
         var errorMessage: String?
     }
@@ -41,6 +42,8 @@ struct WorkspaceFeature {
         case rebuildWorkspaceButtonTapped(CodingWorkspace.ID)
         case removeWorkspaceButtonTapped(CodingWorkspace.ID)
         case removeWorkspaceResponse(CodingWorkspace.ID, Result<Void, WorkspaceFailure>)
+        case savePreferencesButtonTapped
+        case savePreferencesFinished
         case selectWorkspace(CodingWorkspace.ID?)
         case workspacePersistenceFailed(WorkspaceFailure)
     }
@@ -175,6 +178,20 @@ struct WorkspaceFeature {
                     guard let id else { return }
                     await terminalWorkspaceClient.focusSession(id)
                 }
+
+            case .savePreferencesButtonTapped:
+                guard !state.isSavingPreferences else { return .none }
+                state.isSavingPreferences = true
+                let preferences = state.preferences
+
+                return .run { send in
+                    await workspacePreferencesClient.savePreferences(preferences)
+                    await send(.savePreferencesFinished)
+                }
+
+            case .savePreferencesFinished:
+                state.isSavingPreferences = false
+                return .none
 
             case .attachSelectedWorkspaceButtonTapped:
                 guard let id = state.selectedWorkspaceID else { return .none }

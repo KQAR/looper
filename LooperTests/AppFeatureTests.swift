@@ -126,6 +126,40 @@ final class AppFeatureTests: XCTestCase {
         XCTAssertEqual(savedPreferences?.lastSelectedWorkspaceID, secondID)
     }
 
+    func testSavingPreferencesPersistsDefaults() async {
+        let recorder = PreferencesRecorder()
+        let preferences = WorkspacePreferences(
+            defaultRepositoryPath: "/tmp/repo",
+            defaultBaseBranch: "develop",
+            defaultAgentCommand: "claude --model sonnet",
+            lastSelectedWorkspaceID: nil
+        )
+        let initialWorkspaceState = WorkspaceFeature.State(
+            preferences: preferences
+        )
+        let initialState = AppFeature.State(
+            workspace: initialWorkspaceState
+        )
+
+        let store = TestStore(initialState: initialState) {
+            AppFeature()
+        } withDependencies: {
+            $0.workspacePreferencesClient.savePreferences = { await recorder.record($0) }
+        }
+
+        await store.send(.workspace(.savePreferencesButtonTapped)) {
+            $0.workspace.isSavingPreferences = true
+        }
+        await store.receive(\.workspace.savePreferencesFinished) {
+            $0.workspace.isSavingPreferences = false
+        }
+
+        let savedPreferences = await recorder.value()
+        XCTAssertEqual(savedPreferences?.defaultRepositoryPath, preferences.defaultRepositoryPath)
+        XCTAssertEqual(savedPreferences?.defaultBaseBranch, preferences.defaultBaseBranch)
+        XCTAssertEqual(savedPreferences?.defaultAgentCommand, preferences.defaultAgentCommand)
+    }
+
     func testWorkspaceBranchNameNormalizesInput() {
         XCTAssertEqual(
             WorkspaceNaming.branchName(

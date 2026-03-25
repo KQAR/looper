@@ -91,6 +91,8 @@ struct WorkspaceView: View {
             Text("\(store.workspaces.count) active workspace\(store.workspaces.count == 1 ? "" : "s")")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+
+            defaultsCard
         }
         .padding(18)
         .background(.regularMaterial, in: .rect(cornerRadius: 24))
@@ -186,6 +188,54 @@ struct WorkspaceView: View {
     private var selectedWorkspace: CodingWorkspace? {
         guard let id = store.selectedWorkspaceID else { return nil }
         return store.workspaces[id: id]
+    }
+
+    private var defaultsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Defaults")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    store.send(.savePreferencesButtonTapped)
+                } label: {
+                    if store.isSavingPreferences {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text("Save")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.isSavingPreferences)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Repository")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.secondary)
+                TextField("/Users/you/project", text: $store.preferences.defaultRepositoryPath)
+                    .textFieldStyle(.roundedBorder)
+
+                Text("Base")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.secondary)
+                TextField("HEAD", text: $store.preferences.defaultBaseBranch)
+                    .textFieldStyle(.roundedBorder)
+
+                Text("Agent")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.secondary)
+                TextField("claude", text: $store.preferences.defaultAgentCommand)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            Text("New workspaces start from these values.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 18))
     }
 }
 
