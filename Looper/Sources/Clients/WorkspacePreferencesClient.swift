@@ -20,16 +20,22 @@ extension WorkspacePreferencesClient: DependencyKey {
             static let defaultRepositoryPath = "workspacePreferences.defaultRepositoryPath"
             static let defaultAgentCommand = "workspacePreferences.defaultAgentCommand"
             static let lastSelectedWorkspaceID = "workspacePreferences.lastSelectedWorkspaceID"
+            static let taskBoardConfiguration = "workspacePreferences.taskBoardConfiguration"
         }
 
         return WorkspacePreferencesClient(
             fetchPreferences: {
                 let defaults = UserDefaults.standard
+                let taskBoardConfiguration = defaults.data(forKey: Keys.taskBoardConfiguration)
+                    .flatMap { try? JSONDecoder().decode(TaskBoardConfiguration.self, from: $0) }
+                    ?? .init()
+
                 return WorkspacePreferences(
                     defaultRepositoryPath: defaults.string(forKey: Keys.defaultRepositoryPath) ?? "",
                     defaultAgentCommand: defaults.string(forKey: Keys.defaultAgentCommand) ?? "claude",
                     lastSelectedWorkspaceID: defaults.string(forKey: Keys.lastSelectedWorkspaceID)
-                        .flatMap(UUID.init(uuidString:))
+                        .flatMap(UUID.init(uuidString:)),
+                    taskBoardConfiguration: taskBoardConfiguration
                 )
             },
             savePreferences: { preferences in
@@ -39,6 +45,10 @@ extension WorkspacePreferencesClient: DependencyKey {
                 defaults.set(
                     preferences.lastSelectedWorkspaceID?.uuidString,
                     forKey: Keys.lastSelectedWorkspaceID
+                )
+                defaults.set(
+                    try? JSONEncoder().encode(preferences.taskBoardConfiguration),
+                    forKey: Keys.taskBoardConfiguration
                 )
             }
         )

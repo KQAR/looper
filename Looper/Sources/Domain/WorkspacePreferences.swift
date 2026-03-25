@@ -4,6 +4,7 @@ struct WorkspacePreferences: Equatable, Sendable {
     var defaultRepositoryPath: String = ""
     var defaultAgentCommand: String = "claude"
     var lastSelectedWorkspaceID: UUID?
+    var taskBoardConfiguration: TaskBoardConfiguration = .init()
 
     var draft: WorkspaceDraft {
         WorkspaceDraft(

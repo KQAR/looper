@@ -28,6 +28,19 @@ struct AppView: View {
                 endPoint: .bottomTrailing
             )
         )
+        .alert(
+            "Task Board Error",
+            isPresented: Binding(
+                get: { store.taskBoardErrorMessage != nil },
+                set: { if !$0 { store.send(.dismissTaskBoardError) } }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                store.send(.dismissTaskBoardError)
+            }
+        } message: {
+            Text(store.taskBoardErrorMessage ?? "")
+        }
         .onAppear {
             store.send(.onAppear)
         }
@@ -46,10 +59,18 @@ struct AppView: View {
 
                 Spacer()
 
-                if store.isLoadingTasks {
-                    ProgressView()
-                        .controlSize(.small)
+                Button {
+                    store.send(.refreshTasksButtonTapped)
+                } label: {
+                    if store.isLoadingTasks {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
                 }
+                .buttonStyle(.bordered)
+                .disabled(store.isLoadingTasks)
             }
 
             List(
@@ -68,6 +89,12 @@ struct AppView: View {
             Text("\(store.tasks.count) tasks")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+
+            if !taskBoardConfiguration.isConfigured {
+                Text("Configure Feishu below, then refresh to load tasks.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(18)
         .background(.regularMaterial, in: .rect(cornerRadius: 24))
@@ -119,7 +146,7 @@ struct AppView: View {
                     Button("Start Task") {
                         store.send(.startSelectedTaskButtonTapped)
                     }
-                    .disabled(selectedTask?.repoPath == nil)
+                    .disabled(selectedTask?.repoPath == nil || isSelectedTaskUpdating)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.regularMaterial, in: .rect(cornerRadius: 28))
@@ -133,6 +160,8 @@ struct AppView: View {
                 taskCard
                 executionCard
                 controlsCard
+                workspaceDefaultsCard
+                taskBoardCard
             }
             .padding(18)
         }
@@ -195,7 +224,7 @@ struct AppView: View {
                 Label(selectedWorkspace == nil ? "Start Task" : "Resume Task", systemImage: "play.fill")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(selectedTask?.repoPath == nil)
+            .disabled(selectedTask?.repoPath == nil || isSelectedTaskUpdating)
 
             if let workspace = selectedWorkspace {
                 Button {
@@ -212,6 +241,194 @@ struct AppView: View {
                 }
                 .buttonStyle(.bordered)
             }
+
+            Divider()
+
+            Button {
+                store.send(.markSelectedTaskDoneButtonTapped)
+            } label: {
+                Label("Mark Done", systemImage: "checkmark.circle.fill")
+            }
+            .buttonStyle(.bordered)
+            .disabled(selectedTask == nil || isSelectedTaskUpdating)
+
+            Button {
+                store.send(.markSelectedTaskFailedButtonTapped)
+            } label: {
+                Label("Mark Failed", systemImage: "xmark.circle.fill")
+            }
+            .buttonStyle(.bordered)
+            .disabled(selectedTask == nil || isSelectedTaskUpdating)
+
+            if isSelectedTaskUpdating {
+                ProgressView("Syncing task status…")
+                    .controlSize(.small)
+                    .font(.footnote)
+            }
+        }
+        .padding(16)
+        .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 18))
+    }
+
+    private var workspaceDefaultsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Execution Defaults")
+                    .font(.headline)
+                Spacer()
+                Button("Save") {
+                    store.send(.workspace(.savePreferencesButtonTapped))
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.workspace.isSavingPreferences)
+            }
+
+            Text("These values are used when a task starts a new local execution workspace.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Text("Project")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "/Users/you/project",
+                text: defaultRepositoryPathBinding
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Agent")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "claude",
+                text: defaultAgentCommandBinding
+            )
+            .textFieldStyle(.roundedBorder)
+        }
+        .padding(16)
+        .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 18))
+    }
+
+    private var taskBoardCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Task Board")
+                    .font(.headline)
+                Spacer()
+                AppStatusBadge(title: taskBoardConfiguration.isConfigured ? "Configured" : "Needs Setup")
+            }
+
+            Text("MVP uses a Feishu Bitable table. Title, summary, repository, and status field names must match your table exactly.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Text("App ID")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "cli_xxx",
+                text: taskBoardAppIDBinding
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("App Secret")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            SecureField(
+                "xxx",
+                text: taskBoardAppSecretBinding
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Bitable App Token")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "bascn_xxx",
+                text: taskBoardAppTokenBinding
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Table ID")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "tblxxx",
+                text: taskBoardTableIDBinding
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Title Field")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "Title",
+                text: taskBoardTitleFieldBinding
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Summary Field")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "Summary",
+                text: taskBoardSummaryFieldBinding
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Status Field")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "Status",
+                text: taskBoardStatusFieldBinding
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Repository Field")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "Repository",
+                text: taskBoardRepositoryFieldBinding
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Pending Value")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "pending",
+                text: taskBoardPendingValueBinding
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Running Value")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "developing",
+                text: taskBoardDevelopingValueBinding
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Done Value")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "done",
+                text: taskBoardDoneValueBinding
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Failed Value")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(
+                "failed",
+                text: taskBoardFailedValueBinding
+            )
+            .textFieldStyle(.roundedBorder)
         }
         .padding(16)
         .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 18))
@@ -230,6 +447,113 @@ struct AppView: View {
     private var selectedSession: WorkspaceTerminalSession? {
         guard let selectedWorkspace else { return nil }
         return terminalRegistry.session(id: selectedWorkspace.id)
+    }
+
+    private var taskBoardConfiguration: TaskBoardConfiguration {
+        store.workspace.preferences.taskBoardConfiguration
+    }
+
+    private var isSelectedTaskUpdating: Bool {
+        guard let selectedTask else { return false }
+        return store.updatingTaskIDs.contains(selectedTask.id)
+    }
+
+    private var defaultRepositoryPathBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.defaultRepositoryPath },
+            set: { store.send(.workspace(.binding(.set(\.preferences.defaultRepositoryPath, $0)))) }
+        )
+    }
+
+    private var defaultAgentCommandBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.defaultAgentCommand },
+            set: { store.send(.workspace(.binding(.set(\.preferences.defaultAgentCommand, $0)))) }
+        )
+    }
+
+    private var taskBoardAppIDBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.taskBoardConfiguration.appID },
+            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.appID, $0)))) }
+        )
+    }
+
+    private var taskBoardAppSecretBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.taskBoardConfiguration.appSecret },
+            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.appSecret, $0)))) }
+        )
+    }
+
+    private var taskBoardAppTokenBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.taskBoardConfiguration.appToken },
+            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.appToken, $0)))) }
+        )
+    }
+
+    private var taskBoardTableIDBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.taskBoardConfiguration.tableID },
+            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.tableID, $0)))) }
+        )
+    }
+
+    private var taskBoardTitleFieldBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.taskBoardConfiguration.titleFieldName },
+            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.titleFieldName, $0)))) }
+        )
+    }
+
+    private var taskBoardSummaryFieldBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.taskBoardConfiguration.summaryFieldName },
+            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.summaryFieldName, $0)))) }
+        )
+    }
+
+    private var taskBoardStatusFieldBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.taskBoardConfiguration.statusFieldName },
+            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.statusFieldName, $0)))) }
+        )
+    }
+
+    private var taskBoardRepositoryFieldBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.taskBoardConfiguration.repoPathFieldName },
+            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.repoPathFieldName, $0)))) }
+        )
+    }
+
+    private var taskBoardPendingValueBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.taskBoardConfiguration.pendingStatusValue },
+            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.pendingStatusValue, $0)))) }
+        )
+    }
+
+    private var taskBoardDevelopingValueBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.taskBoardConfiguration.developingStatusValue },
+            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.developingStatusValue, $0)))) }
+        )
+    }
+
+    private var taskBoardDoneValueBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.taskBoardConfiguration.doneStatusValue },
+            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.doneStatusValue, $0)))) }
+        )
+    }
+
+    private var taskBoardFailedValueBinding: Binding<String> {
+        Binding(
+            get: { store.workspace.preferences.taskBoardConfiguration.failedStatusValue },
+            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.failedStatusValue, $0)))) }
+        )
     }
 }
 

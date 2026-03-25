@@ -15,6 +15,18 @@ actor PreferencesRecorder {
     }
 }
 
+actor TaskStatusRecorder {
+    private var events: [(String, LooperTask.Status)] = []
+
+    func record(_ taskID: String, _ status: LooperTask.Status) {
+        events.append((taskID, status))
+    }
+
+    func value() -> [(String, LooperTask.Status)] {
+        events
+    }
+}
+
 @MainActor
 final class AppFeatureTests: XCTestCase {
     func testInitialStateHasNoTasksOrWorkspaces() async {
@@ -45,25 +57,37 @@ final class AppFeatureTests: XCTestCase {
             source: "Mock Feishu",
             repoPath: URL(filePath: "/tmp/second")
         )
+        let configuration = TaskBoardConfiguration(
+            appID: "cli_xxx",
+            appSecret: "secret",
+            appToken: "app_token",
+            tableID: "tbl_tasks"
+        )
 
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
         } withDependencies: {
-            $0.taskBoardClient.fetchTasks = { [firstTask, secondTask] }
+            $0.taskBoardClient.fetchTasks = { _ in [firstTask, secondTask] }
             $0.workspaceStoreClient.fetchWorkspaces = { [] }
-            $0.workspacePreferencesClient.fetchPreferences = { .init() }
+            $0.workspacePreferencesClient.fetchPreferences = {
+                WorkspacePreferences(taskBoardConfiguration: configuration)
+            }
         }
 
-        await store.send(.onAppear) {
+        await store.send(.onAppear)
+        await store.receive(\.workspace.onAppear)
+        await store.receive(\.workspace.bootstrapResponse.success) {
+            $0.workspace.preferences = WorkspacePreferences(taskBoardConfiguration: configuration)
+            $0.workspace.composer = WorkspacePreferences(taskBoardConfiguration: configuration).draft
+        }
+        await store.receive(\.refreshTasksButtonTapped) {
             $0.isLoadingTasks = true
         }
-        await store.receive(\.workspace.onAppear)
-        await store.receive(\.taskResponse) {
+        await store.receive(\.taskResponse.success) {
             $0.isLoadingTasks = false
             $0.tasks = [firstTask, secondTask]
             $0.selectedTaskID = firstTask.id
         }
-        await store.receive(\.workspace.bootstrapResponse.success)
     }
 
     func testStartSelectedTaskTriggersWorkspaceCreation() async {
@@ -103,9 +127,7 @@ final class AppFeatureTests: XCTestCase {
             $0.terminalWorkspaceClient.bootstrapSession = { _ in }
         }
 
-        await store.send(.startSelectedTaskButtonTapped) {
-            $0.tasks[id: task.id]?.status = .developing
-        }
+        await store.send(.startSelectedTaskButtonTapped)
         await store.receive(\.workspace.createWorkspaceFromDefaults) {
             $0.workspace.composer = WorkspaceDraft(
                 name: "",
@@ -471,6 +493,53 @@ final class AppFeatureTests: XCTestCase {
         let savedPreferences = await recorder.value()
         XCTAssertEqual(savedPreferences?.defaultRepositoryPath, preferences.defaultRepositoryPath)
         XCTAssertEqual(savedPreferences?.defaultAgentCommand, preferences.defaultAgentCommand)
+    }
+
+    func testMarkSelectedTaskDoneWritesBackStatus() async {
+        let configuration = TaskBoardConfiguration(
+            appID: "cli_xxx",
+            appSecret: "secret",
+            appToken: "app_token",
+            tableID: "tbl_tasks"
+        )
+        let task = LooperTask(
+            id: "task-1",
+            title: "Done me",
+            summary: "Summary",
+            status: .developing,
+            source: "Feishu",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let recorder = TaskStatusRecorder()
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                selectedTaskID: task.id,
+                workspace: WorkspaceFeature.State(
+                    preferences: WorkspacePreferences(taskBoardConfiguration: configuration)
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.taskBoardClient.updateTaskStatus = { taskID, status, _ in
+                await recorder.record(taskID, status)
+            }
+        }
+
+        await store.send(.markSelectedTaskDoneButtonTapped) {
+            $0.updatingTaskIDs = [task.id]
+        }
+        await store.receive(\.taskStatusUpdateResponse.success) {
+            $0.updatingTaskIDs = []
+            $0.tasks[id: task.id]?.status = .done
+        }
+
+        let events = await recorder.value()
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events.first?.0, task.id)
+        XCTAssertEqual(events.first?.1, .done)
     }
 
     func testWorkspaceBranchNameNormalizesInput() {

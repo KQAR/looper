@@ -5,19 +5,31 @@ import Foundation
 struct AppFeature {
     @Dependency(\.taskBoardClient) var taskBoardClient
 
+    struct TaskStatusUpdate: Equatable, Sendable {
+        var taskID: LooperTask.ID
+        var status: LooperTask.Status
+    }
+
     @ObservableState
     struct State: Equatable {
         var tasks: IdentifiedArrayOf<LooperTask> = []
         var selectedTaskID: LooperTask.ID?
         var isLoadingTasks = false
+        var updatingTaskIDs: Set<LooperTask.ID> = []
+        var taskBoardErrorMessage: String?
         var workspace = WorkspaceFeature.State()
     }
 
     enum Action {
+        case dismissTaskBoardError
+        case markSelectedTaskDoneButtonTapped
+        case markSelectedTaskFailedButtonTapped
         case onAppear
+        case refreshTasksButtonTapped
         case selectTask(LooperTask.ID?)
         case startSelectedTaskButtonTapped
-        case taskResponse([LooperTask])
+        case taskResponse(Result<[LooperTask], TaskBoardFailure>)
+        case taskStatusUpdateResponse(Result<TaskStatusUpdate, TaskBoardFailure>)
         case workspace(WorkspaceFeature.Action)
     }
 
@@ -29,16 +41,32 @@ struct AppFeature {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                return .send(.workspace(.onAppear))
+
+            case .refreshTasksButtonTapped:
+                let configuration = state.workspace.preferences.taskBoardConfiguration
+                guard configuration.isConfigured else {
+                    state.taskBoardErrorMessage = "Configure Feishu App ID, secret, app token, and table ID first."
+                    return .none
+                }
+
                 state.isLoadingTasks = true
+                state.taskBoardErrorMessage = nil
 
-                return .merge(
-                    .send(.workspace(.onAppear)),
-                    .run { send in
-                        await send(.taskResponse(taskBoardClient.fetchTasks()))
+                return .run { send in
+                    do {
+                        let tasks = try await taskBoardClient.fetchTasks(configuration)
+                        await send(.taskResponse(.success(tasks)))
+                    } catch {
+                        await send(
+                            .taskResponse(
+                                .failure(.init(description: error.localizedDescription))
+                            )
+                        )
                     }
-                )
+                }
 
-            case let .taskResponse(tasks):
+            case let .taskResponse(.success(tasks)):
                 state.isLoadingTasks = false
                 state.tasks = IdentifiedArray(uniqueElements: tasks)
 
@@ -56,6 +84,11 @@ struct AppFeature {
 
                 return syncWorkspaceSelection(state: &state)
 
+            case let .taskResponse(.failure(error)):
+                state.isLoadingTasks = false
+                state.taskBoardErrorMessage = error.description
+                return .none
+
             case let .selectTask(id):
                 state.selectedTaskID = id
                 return syncWorkspaceSelection(state: &state)
@@ -65,30 +98,108 @@ struct AppFeature {
 
                 if let existingWorkspaceID = workspaceID(for: task, in: state.workspace.workspaces) {
                     state.selectedTaskID = task.id
-                    return .merge(
+                    var effects: [Effect<Action>] = [
                         .send(.workspace(.selectWorkspace(existingWorkspaceID))),
-                        .send(.workspace(.attachSelectedWorkspaceButtonTapped))
-                    )
+                        .send(.workspace(.attachSelectedWorkspaceButtonTapped)),
+                    ]
+
+                    if state.workspace.preferences.taskBoardConfiguration.isConfigured {
+                        effects.append(
+                            writeTaskStatus(
+                                taskID: task.id,
+                                status: .developing,
+                                configuration: state.workspace.preferences.taskBoardConfiguration,
+                                state: &state,
+                                updateStatus: taskBoardClient.updateTaskStatus
+                            )
+                        )
+                    }
+
+                    return .merge(effects)
                 }
 
                 guard let repoPath = task.repoPath?.path(percentEncoded: false) else {
                     return .none
                 }
 
-                updateTaskStatus(id: task.id, status: .developing, state: &state)
                 return .send(.workspace(.createWorkspaceFromDefaults(repoPath)))
 
             case let .workspace(.createWorkspaceResponse(.success(workspace))):
                 if let taskID = taskID(matching: workspace, in: state.tasks) {
                     state.selectedTaskID = taskID
-                    updateTaskStatus(id: taskID, status: .developing, state: &state)
+
+                    if state.workspace.preferences.taskBoardConfiguration.isConfigured {
+                        return writeTaskStatus(
+                            taskID: taskID,
+                            status: .developing,
+                            configuration: state.workspace.preferences.taskBoardConfiguration,
+                            state: &state,
+                            updateStatus: taskBoardClient.updateTaskStatus
+                        )
+                    }
                 }
                 return .none
 
-            case .workspace(.bootstrapResponse(.success)):
+            case let .workspace(.bootstrapResponse(.success(payload))):
                 if state.selectedTaskID == nil {
                     state.selectedTaskID = taskIDMatchingSelectedWorkspace(state: state) ?? state.tasks.ids.first
                 }
+
+                guard payload.preferences.taskBoardConfiguration.isConfigured else {
+                    return .none
+                }
+
+                return .send(.refreshTasksButtonTapped)
+
+            case .workspace(.savePreferencesFinished):
+                guard state.workspace.preferences.taskBoardConfiguration.isConfigured else {
+                    return .none
+                }
+
+                return .send(.refreshTasksButtonTapped)
+
+            case .markSelectedTaskDoneButtonTapped:
+                guard let task = selectedTask(state: state) else { return .none }
+                guard state.workspace.preferences.taskBoardConfiguration.isConfigured else {
+                    state.taskBoardErrorMessage = "Configure Feishu task board settings before writing status back."
+                    return .none
+                }
+
+                return writeTaskStatus(
+                    taskID: task.id,
+                    status: .done,
+                    configuration: state.workspace.preferences.taskBoardConfiguration,
+                    state: &state,
+                    updateStatus: taskBoardClient.updateTaskStatus
+                )
+
+            case .markSelectedTaskFailedButtonTapped:
+                guard let task = selectedTask(state: state) else { return .none }
+                guard state.workspace.preferences.taskBoardConfiguration.isConfigured else {
+                    state.taskBoardErrorMessage = "Configure Feishu task board settings before writing status back."
+                    return .none
+                }
+
+                return writeTaskStatus(
+                    taskID: task.id,
+                    status: .failed,
+                    configuration: state.workspace.preferences.taskBoardConfiguration,
+                    state: &state,
+                    updateStatus: taskBoardClient.updateTaskStatus
+                )
+
+            case let .taskStatusUpdateResponse(.success(update)):
+                state.updatingTaskIDs.remove(update.taskID)
+                updateTaskStatus(id: update.taskID, status: update.status, state: &state)
+                return .none
+
+            case let .taskStatusUpdateResponse(.failure(error)):
+                state.updatingTaskIDs = []
+                state.taskBoardErrorMessage = error.description
+                return .none
+
+            case .dismissTaskBoardError:
+                state.taskBoardErrorMessage = nil
                 return .none
 
             case .workspace:
@@ -158,4 +269,35 @@ private func updateTaskStatus(
 ) {
     guard state.tasks[id: id] != nil else { return }
     state.tasks[id: id]?.status = status
+}
+
+private func writeTaskStatus(
+    taskID: LooperTask.ID,
+    status: LooperTask.Status,
+    configuration: TaskBoardConfiguration,
+    state: inout AppFeature.State,
+    updateStatus: @escaping @Sendable (LooperTask.ID, LooperTask.Status, TaskBoardConfiguration) async throws -> Void
+) -> Effect<AppFeature.Action> {
+    guard !state.updatingTaskIDs.contains(taskID) else {
+        return .none
+    }
+
+    state.updatingTaskIDs.insert(taskID)
+
+    return .run { send in
+        do {
+            try await updateStatus(taskID, status, configuration)
+            await send(
+                .taskStatusUpdateResponse(
+                    .success(.init(taskID: taskID, status: status))
+                )
+            )
+        } catch {
+            await send(
+                .taskStatusUpdateResponse(
+                    .failure(.init(description: error.localizedDescription))
+                )
+            )
+        }
+    }
 }
