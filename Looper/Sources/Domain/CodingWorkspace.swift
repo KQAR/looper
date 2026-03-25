@@ -45,6 +45,15 @@ struct CodingWorkspace: Equatable, Identifiable, Sendable {
         worktreeURL.lastPathComponent
     }
 
+    var exitStatusFileURL: URL {
+        URL(fileURLWithPath: NSTemporaryDirectory())
+            .appending(path: "looper-workspace-\(id.uuidString)-exit-status")
+    }
+
+    var tracksAgentLifecycle: Bool {
+        !agentCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var launchesProjectDirectoryDirectly: Bool {
         repositoryRootPath == worktreePath
             && branchName.isEmpty
@@ -55,6 +64,7 @@ struct CodingWorkspace: Equatable, Identifiable, Sendable {
         let escapedWorktree = worktreePath.shellQuoted
         let escapedSession = tmuxSessionName.shellQuoted
         let command = agentCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        let escapedStatusFile = exitStatusFileURL.path.shellQuoted
 
         if command.isEmpty {
             return """
@@ -66,15 +76,21 @@ struct CodingWorkspace: Equatable, Identifiable, Sendable {
             """
         }
 
-        let launchScript = "cd \(escapedWorktree) && \(command)"
-        let escapedLaunchScript = launchScript.shellQuoted
+        let wrappedLaunchScript = """
+        rm -f \(escapedStatusFile)
+        cd \(escapedWorktree) && \(command)
+        status=$?
+        printf '%s' "$status" > \(escapedStatusFile)
+        exit "$status"
+        """
+        let escapedWrappedLaunchScript = wrappedLaunchScript.shellQuoted
 
         return """
         if command -v tmux >/dev/null 2>&1; then
-          tmux has-session -t \(escapedSession) 2>/dev/null || tmux new-session -d -s \(escapedSession) -c \(escapedWorktree) \(escapedLaunchScript)
+          tmux has-session -t \(escapedSession) 2>/dev/null || tmux new-session -d -s \(escapedSession) -c \(escapedWorktree) /bin/zsh -lc \(escapedWrappedLaunchScript)
           tmux attach-session -t \(escapedSession)
         else
-          \(launchScript)
+          /bin/zsh -lc \(escapedWrappedLaunchScript)
         fi
         """
     }

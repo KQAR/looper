@@ -72,6 +72,11 @@ final class AppFeatureTests: XCTestCase {
             $0.workspacePreferencesClient.fetchPreferences = {
                 WorkspacePreferences(taskBoardConfiguration: configuration)
             }
+            $0.terminalWorkspaceClient.events = {
+                AsyncStream { continuation in
+                    continuation.finish()
+                }
+            }
         }
 
         await store.send(.onAppear)
@@ -529,6 +534,71 @@ final class AppFeatureTests: XCTestCase {
         }
 
         await store.send(.markSelectedTaskDoneButtonTapped) {
+            $0.updatingTaskIDs = [task.id]
+        }
+        await store.receive(\.taskStatusUpdateResponse.success) {
+            $0.updatingTaskIDs = []
+            $0.tasks[id: task.id]?.status = .done
+        }
+
+        let events = await recorder.value()
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events.first?.0, task.id)
+        XCTAssertEqual(events.first?.1, .done)
+    }
+
+    func testTerminalEventAutoWritesDoneStatus() async {
+        let configuration = TaskBoardConfiguration(
+            appID: "cli_xxx",
+            appSecret: "secret",
+            appToken: "app_token",
+            tableID: "tbl_tasks"
+        )
+        let workspace = CodingWorkspace(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            repositoryRootPath: "/tmp/demo",
+            worktreePath: "/tmp/demo",
+            branchName: "",
+            baseBranch: "",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+        let task = LooperTask(
+            id: "task-1",
+            title: "Ship it",
+            summary: "Summary",
+            status: .developing,
+            source: "Feishu",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let recorder = TaskStatusRecorder()
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                selectedTaskID: task.id,
+                workspace: WorkspaceFeature.State(
+                    workspaces: [workspace],
+                    selectedWorkspaceID: workspace.id,
+                    preferences: WorkspacePreferences(taskBoardConfiguration: configuration)
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.taskBoardClient.updateTaskStatus = { taskID, status, _ in
+                await recorder.record(taskID, status)
+            }
+        }
+
+        let event = WorkspaceTerminalEvent(
+            workspaceID: workspace.id,
+            suggestedTaskStatus: .done,
+            exitCode: 0
+        )
+
+        await store.send(.terminalEventReceived(event)) {
             $0.updatingTaskIDs = [task.id]
         }
         await store.receive(\.taskStatusUpdateResponse.success) {

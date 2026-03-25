@@ -8,6 +8,11 @@ struct TerminalWorkspaceClient {
     var focusSession: @Sendable (UUID) async -> Void
     var bootstrapSession: @Sendable (UUID) async -> Void
     var rebuildSession: @Sendable (CodingWorkspace) async -> Void
+    var events: @Sendable () async -> AsyncStream<WorkspaceTerminalEvent> = {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
 }
 
 extension DependencyValues {
@@ -42,6 +47,11 @@ extension TerminalWorkspaceClient: DependencyKey {
         rebuildSession: { workspace in
             await MainActor.run {
                 WorkspaceTerminalRegistry.shared.rebuildSession(for: workspace)
+            }
+        },
+        events: {
+            await MainActor.run {
+                WorkspaceTerminalRegistry.shared.events()
             }
         }
     )

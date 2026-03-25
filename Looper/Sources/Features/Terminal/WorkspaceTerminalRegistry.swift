@@ -9,6 +9,7 @@ final class WorkspaceTerminalRegistry {
     static let shared = WorkspaceTerminalRegistry()
 
     private(set) var sessions: [UUID: WorkspaceTerminalSession] = [:]
+    private var eventContinuations: [UUID: AsyncStream<WorkspaceTerminalEvent>.Continuation] = [:]
 
     func upsertSession(for workspace: CodingWorkspace) {
         if let session = sessions[workspace.id] {
@@ -16,12 +17,16 @@ final class WorkspaceTerminalRegistry {
             return
         }
 
-        sessions[workspace.id] = WorkspaceTerminalSession(workspace: workspace)
+        sessions[workspace.id] = WorkspaceTerminalSession(workspace: workspace) { [weak self] event in
+            self?.broadcast(event)
+        }
     }
 
     func rebuildSession(for workspace: CodingWorkspace) {
         sessions[workspace.id]?.invalidate()
-        sessions[workspace.id] = WorkspaceTerminalSession(workspace: workspace)
+        sessions[workspace.id] = WorkspaceTerminalSession(workspace: workspace) { [weak self] event in
+            self?.broadcast(event)
+        }
     }
 
     func session(id: UUID) -> WorkspaceTerminalSession? {
@@ -31,6 +36,30 @@ final class WorkspaceTerminalRegistry {
     func removeSession(id: UUID) {
         sessions.removeValue(forKey: id)?.invalidate()
     }
+
+    func events() -> AsyncStream<WorkspaceTerminalEvent> {
+        AsyncStream { continuation in
+            let id = UUID()
+            eventContinuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor in
+                    self?.eventContinuations.removeValue(forKey: id)
+                }
+            }
+        }
+    }
+
+    private func broadcast(_ event: WorkspaceTerminalEvent) {
+        for continuation in eventContinuations.values {
+            continuation.yield(event)
+        }
+    }
+}
+
+struct WorkspaceTerminalEvent: Equatable, Sendable {
+    var workspaceID: UUID
+    var suggestedTaskStatus: LooperTask.Status?
+    var exitCode: Int32?
 }
 
 @MainActor
@@ -68,9 +97,14 @@ final class WorkspaceTerminalSession: NSObject {
     private weak var terminalView: AppTerminalView?
     private var attachTask: Task<Void, Never>?
     private var didAttemptAttach = false
+    private let eventSink: @MainActor @Sendable (WorkspaceTerminalEvent) -> Void
 
-    init(workspace: CodingWorkspace) {
+    init(
+        workspace: CodingWorkspace,
+        eventSink: @escaping @MainActor @Sendable (WorkspaceTerminalEvent) -> Void
+    ) {
         self.workspace = workspace
+        self.eventSink = eventSink
         self.controller = TerminalController { configuration in
             configuration.withFontSize(13)
             configuration.withBackgroundOpacity(0.92)
@@ -170,5 +204,32 @@ extension WorkspaceTerminalSession:
     func terminalDidClose(processAlive _: Bool) {
         phase = .terminated
         didAttemptAttach = false
+
+        guard workspace.tracksAgentLifecycle else { return }
+
+        let exitCode = consumeExitCode()
+        let suggestedTaskStatus: LooperTask.Status = (exitCode ?? 1) == 0 ? .done : .failed
+        eventSink(
+            WorkspaceTerminalEvent(
+                workspaceID: workspace.id,
+                suggestedTaskStatus: suggestedTaskStatus,
+                exitCode: exitCode
+            )
+        )
+    }
+}
+
+private extension WorkspaceTerminalSession {
+    func consumeExitCode() -> Int32? {
+        let url = workspace.exitStatusFileURL
+        guard let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+
+        try? FileManager.default.removeItem(at: url)
+
+        let rawValue = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return Int32(rawValue)
     }
 }

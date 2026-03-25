@@ -4,10 +4,20 @@ import Foundation
 @Reducer
 struct AppFeature {
     @Dependency(\.taskBoardClient) var taskBoardClient
+    @Dependency(\.terminalWorkspaceClient) var terminalWorkspaceClient
 
     struct TaskStatusUpdate: Equatable, Sendable {
         var taskID: LooperTask.ID
         var status: LooperTask.Status
+    }
+
+    struct TaskStatusFailure: LocalizedError, Equatable, Sendable {
+        var taskID: LooperTask.ID
+        var description: String
+
+        var errorDescription: String? {
+            description
+        }
     }
 
     @ObservableState
@@ -29,7 +39,8 @@ struct AppFeature {
         case selectTask(LooperTask.ID?)
         case startSelectedTaskButtonTapped
         case taskResponse(Result<[LooperTask], TaskBoardFailure>)
-        case taskStatusUpdateResponse(Result<TaskStatusUpdate, TaskBoardFailure>)
+        case taskStatusUpdateResponse(Result<TaskStatusUpdate, TaskStatusFailure>)
+        case terminalEventReceived(WorkspaceTerminalEvent)
         case workspace(WorkspaceFeature.Action)
     }
 
@@ -41,7 +52,15 @@ struct AppFeature {
         Reduce { state, action in
             switch action {
             case .onAppear:
-                return .send(.workspace(.onAppear))
+                return .merge(
+                    .send(.workspace(.onAppear)),
+                    .run { send in
+                        let events = await terminalWorkspaceClient.events()
+                        for await event in events {
+                            await send(.terminalEventReceived(event))
+                        }
+                    }
+                )
 
             case .refreshTasksButtonTapped:
                 let configuration = state.workspace.preferences.taskBoardConfiguration
@@ -194,8 +213,28 @@ struct AppFeature {
                 return .none
 
             case let .taskStatusUpdateResponse(.failure(error)):
-                state.updatingTaskIDs = []
+                state.updatingTaskIDs.remove(error.taskID)
                 state.taskBoardErrorMessage = error.description
+                return .none
+
+            case let .terminalEventReceived(event):
+                guard let suggestedStatus = event.suggestedTaskStatus else { return .none }
+                guard let workspace = state.workspace.workspaces[id: event.workspaceID] else { return .none }
+                guard let taskID = taskID(matching: workspace, in: state.tasks) else { return .none }
+                guard let task = state.tasks[id: taskID] else { return .none }
+                guard task.status == .developing else { return .none }
+
+                if state.workspace.preferences.taskBoardConfiguration.isConfigured {
+                    return writeTaskStatus(
+                        taskID: taskID,
+                        status: suggestedStatus,
+                        configuration: state.workspace.preferences.taskBoardConfiguration,
+                        state: &state,
+                        updateStatus: taskBoardClient.updateTaskStatus
+                    )
+                }
+
+                updateTaskStatus(id: taskID, status: suggestedStatus, state: &state)
                 return .none
 
             case .dismissTaskBoardError:
@@ -295,7 +334,7 @@ private func writeTaskStatus(
         } catch {
             await send(
                 .taskStatusUpdateResponse(
-                    .failure(.init(description: error.localizedDescription))
+                    .failure(.init(taskID: taskID, description: error.localizedDescription))
                 )
             )
         }
