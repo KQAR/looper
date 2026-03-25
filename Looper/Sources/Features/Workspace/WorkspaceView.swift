@@ -57,7 +57,7 @@ struct WorkspaceView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Workspaces")
                         .font(.title2.weight(.semibold))
-                    Text("Each workspace maps one worktree to one live terminal context.")
+                    Text("Each workspace maps one project directory to one live terminal context.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -154,7 +154,7 @@ struct WorkspaceView: View {
                 ContentUnavailableView(
                     "No Workspace Selected",
                     systemImage: "rectangle.split.3x1",
-                    description: Text("Create a workspace to open a worktree-backed agent terminal.")
+                    description: Text("Open a project directory to start an attached terminal.")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.regularMaterial, in: .rect(cornerRadius: 28))
@@ -177,7 +177,7 @@ struct WorkspaceView: View {
                 ContentUnavailableView(
                     "No Context",
                     systemImage: "sidebar.right",
-                    description: Text("Select a workspace to inspect its worktree, branch, and terminal status.")
+                    description: Text("Select a workspace to inspect its project directory and terminal status.")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.regularMaterial, in: .rect(cornerRadius: 24))
@@ -211,16 +211,10 @@ struct WorkspaceView: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("Repository")
+                Text("Project")
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.secondary)
                 TextField("/Users/you/project", text: $store.preferences.defaultRepositoryPath)
-                    .textFieldStyle(.roundedBorder)
-
-                Text("Base")
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(.secondary)
-                TextField("HEAD", text: $store.preferences.defaultBaseBranch)
                     .textFieldStyle(.roundedBorder)
 
                 Text("Agent")
@@ -255,9 +249,10 @@ private struct WorkspaceListRow: View {
                 }
             }
 
-            Text(workspace.branchName)
+            Text(workspace.worktreePath)
                 .font(.footnote.monospaced())
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
 
             Text(workspace.repositoryRootURL.lastPathComponent)
                 .font(.footnote)
@@ -282,7 +277,7 @@ private struct WorkspaceInspectorPanel: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(workspace.name)
                         .font(.title3.weight(.semibold))
-                    Text("Parallel coding contexts stay anchored to this worktree.")
+                    Text("This terminal stays anchored to the selected project directory.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -318,10 +313,7 @@ private struct WorkspaceInspectorPanel: View {
             Text("Repository")
                 .font(.headline)
 
-            InspectorValueRow(label: "Repo Root", value: workspace.repositoryRootPath)
-            InspectorValueRow(label: "Worktree", value: workspace.worktreePath)
-            InspectorValueRow(label: "Branch", value: workspace.branchName)
-            InspectorValueRow(label: "Base", value: workspace.baseBranch)
+            InspectorValueRow(label: "Project", value: workspace.worktreePath)
             InspectorValueRow(label: "tmux", value: workspace.tmuxSessionName)
         }
         .padding(16)
@@ -352,7 +344,7 @@ private struct WorkspaceComposerSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("New Workspace")
                     .font(.title2.weight(.semibold))
-                Text("Create a dedicated worktree and keep its terminal agent attached.")
+                Text("Open a project directory and keep its terminal agent attached.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -361,28 +353,14 @@ private struct WorkspaceComposerSheet: View {
                 GridRow {
                     Text("Name")
                         .foregroundStyle(.secondary)
-                    TextField("payment-hardening", text: $store.composer.name)
+                    TextField("Optional display name", text: $store.composer.name)
                         .textFieldStyle(.roundedBorder)
                 }
 
                 GridRow {
-                    Text("Repository")
+                    Text("Project")
                         .foregroundStyle(.secondary)
                     TextField("/Users/you/project", text: $store.composer.repositoryPath)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                GridRow {
-                    Text("Base")
-                        .foregroundStyle(.secondary)
-                    TextField("HEAD", text: $store.composer.baseBranch)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                GridRow {
-                    Text("Branch")
-                        .foregroundStyle(.secondary)
-                    TextField("looper/my-branch", text: $store.composer.branchName)
                         .textFieldStyle(.roundedBorder)
                 }
 
@@ -394,7 +372,7 @@ private struct WorkspaceComposerSheet: View {
                 }
             }
 
-            Text("Derived branch: \(store.composer.inferredBranchName)")
+            Text("Workspace name: \(store.composer.inferredName)")
                 .font(.footnote.monospaced())
                 .foregroundStyle(.secondary)
 
@@ -413,7 +391,7 @@ private struct WorkspaceComposerSheet: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Text("Create Workspace")
+                        Text("Open Workspace")
                     }
                 }
                 .buttonStyle(.borderedProminent)

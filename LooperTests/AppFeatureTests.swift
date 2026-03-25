@@ -45,7 +45,6 @@ final class AppFeatureTests: XCTestCase {
             $0.workspacePreferencesClient.fetchPreferences = {
                 WorkspacePreferences(
                     defaultRepositoryPath: "/tmp/repo",
-                    defaultBaseBranch: "main",
                     defaultAgentCommand: "claude --dangerously-skip-permissions",
                     lastSelectedWorkspaceID: workspace.id
                 )
@@ -59,13 +58,11 @@ final class AppFeatureTests: XCTestCase {
             $0.workspace.selectedWorkspaceID = workspace.id
             $0.workspace.preferences = WorkspacePreferences(
                 defaultRepositoryPath: "/tmp/repo",
-                defaultBaseBranch: "main",
                 defaultAgentCommand: "claude --dangerously-skip-permissions",
                 lastSelectedWorkspaceID: workspace.id
             )
             $0.workspace.composer = WorkspacePreferences(
                 defaultRepositoryPath: "/tmp/repo",
-                defaultBaseBranch: "main",
                 defaultAgentCommand: "claude --dangerously-skip-permissions",
                 lastSelectedWorkspaceID: workspace.id
             ).draft
@@ -104,7 +101,6 @@ final class AppFeatureTests: XCTestCase {
                     selectedWorkspaceID: firstID,
                     preferences: WorkspacePreferences(
                         defaultRepositoryPath: "/tmp/repo",
-                        defaultBaseBranch: "main",
                         defaultAgentCommand: "claude",
                         lastSelectedWorkspaceID: firstID
                     )
@@ -130,7 +126,6 @@ final class AppFeatureTests: XCTestCase {
         let recorder = PreferencesRecorder()
         let preferences = WorkspacePreferences(
             defaultRepositoryPath: "/tmp/repo",
-            defaultBaseBranch: "develop",
             defaultAgentCommand: "claude --model sonnet",
             lastSelectedWorkspaceID: nil
         )
@@ -156,24 +151,22 @@ final class AppFeatureTests: XCTestCase {
 
         let savedPreferences = await recorder.value()
         XCTAssertEqual(savedPreferences?.defaultRepositoryPath, preferences.defaultRepositoryPath)
-        XCTAssertEqual(savedPreferences?.defaultBaseBranch, preferences.defaultBaseBranch)
         XCTAssertEqual(savedPreferences?.defaultAgentCommand, preferences.defaultAgentCommand)
     }
 
     func testWorkspaceBranchNameNormalizesInput() {
-        XCTAssertEqual(
-            WorkspaceNaming.branchName(
-                name: "Payment Hardening",
-                explicitBranchName: ""
-            ),
-            "looper/payment-hardening"
+        let namedDraft = WorkspaceDraft(
+            name: "Payment Hardening",
+            repositoryPath: "/tmp/repo",
+            agentCommand: "claude"
         )
-        XCTAssertEqual(
-            WorkspaceNaming.branchName(
-                name: "Ignored",
-                explicitBranchName: "feature/Task Board"
-            ),
-            "feature/task-board"
+        let unnamedDraft = WorkspaceDraft(
+            name: "",
+            repositoryPath: "/tmp/Feature Repo",
+            agentCommand: "claude"
         )
+
+        XCTAssertEqual(namedDraft.inferredName, "Payment Hardening")
+        XCTAssertEqual(unnamedDraft.inferredName, "Feature Repo")
     }
 }

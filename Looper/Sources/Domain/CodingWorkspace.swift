@@ -45,6 +45,12 @@ struct CodingWorkspace: Equatable, Identifiable, Sendable {
         worktreeURL.lastPathComponent
     }
 
+    var launchesProjectDirectoryDirectly: Bool {
+        repositoryRootPath == worktreePath
+            && branchName.isEmpty
+            && baseBranch.isEmpty
+    }
+
     var attachScript: String {
         let escapedWorktree = worktreePath.shellQuoted
         let escapedSession = tmuxSessionName.shellQuoted
@@ -77,8 +83,6 @@ struct CodingWorkspace: Equatable, Identifiable, Sendable {
 struct WorkspaceDraft: Equatable, Sendable {
     var name: String = ""
     var repositoryPath: String = ""
-    var baseBranch: String = "HEAD"
-    var branchName: String = ""
     var agentCommand: String = "claude"
 
     var trimmedName: String {
@@ -89,43 +93,32 @@ struct WorkspaceDraft: Equatable, Sendable {
         repositoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var trimmedBaseBranch: String {
-        let value = baseBranch.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? "HEAD" : value
-    }
-
-    var trimmedBranchName: String {
-        branchName.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     var trimmedAgentCommand: String {
         agentCommand.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var inferredBranchName: String {
-        WorkspaceNaming.branchName(
-            name: trimmedName,
-            explicitBranchName: trimmedBranchName
-        )
+    var inferredName: String {
+        let explicitName = trimmedName
+        guard !explicitName.isEmpty else {
+            let lastPathComponent = URL(fileURLWithPath: trimmedRepositoryPath).lastPathComponent
+            return lastPathComponent.isEmpty ? "Workspace" : lastPathComponent
+        }
+        return explicitName
     }
 
     var canCreate: Bool {
-        !trimmedName.isEmpty && !trimmedRepositoryPath.isEmpty
+        !trimmedRepositoryPath.isEmpty
     }
 }
 
 struct CreateWorkspaceRequest: Equatable, Sendable {
     var name: String
     var repositoryPath: String
-    var baseBranch: String
-    var branchName: String
     var agentCommand: String
 
     init(draft: WorkspaceDraft) {
-        self.name = draft.trimmedName
+        self.name = draft.inferredName
         self.repositoryPath = draft.trimmedRepositoryPath
-        self.baseBranch = draft.trimmedBaseBranch
-        self.branchName = draft.inferredBranchName
         self.agentCommand = draft.trimmedAgentCommand
     }
 }
@@ -152,66 +145,12 @@ enum WorkspaceNaming {
         return trimmed.isEmpty ? fallback : trimmed.lowercased()
     }
 
-    static func branchName(name: String, explicitBranchName: String) -> String {
-        let explicit = explicitBranchName.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        guard !explicit.isEmpty else {
-            return "looper/\(slug(name, fallback: "workspace"))"
-        }
-
-        let sanitizedComponents = explicit
-            .split(separator: "/")
-            .map { slug(String($0), fallback: "workspace") }
-            .filter { !$0.isEmpty }
-
-        if sanitizedComponents.isEmpty {
-            return "looper/\(slug(name, fallback: "workspace"))"
-        }
-
-        let normalized = sanitizedComponents.joined(separator: "/")
-        return normalized.contains("/")
-            ? normalized
-            : "looper/\(normalized)"
-    }
-
     static func tmuxSessionName(
         repositoryRootPath: String,
-        branchName: String
+        workspaceName: String
     ) -> String {
         let repoName = URL(fileURLWithPath: repositoryRootPath).lastPathComponent
-        let branch = branchName.replacingOccurrences(of: "/", with: "-")
-        return slug("\(repoName)-\(branch)", fallback: "looper-session")
-    }
-
-    static func worktreeContainerURL(for repositoryRootPath: String) -> URL {
-        let repositoryRoot = URL(fileURLWithPath: repositoryRootPath)
-        return repositoryRoot
-            .deletingLastPathComponent()
-            .appendingPathComponent(".looper-worktrees", isDirectory: true)
-            .appendingPathComponent(repositoryRoot.lastPathComponent, isDirectory: true)
-    }
-
-    static func uniqueWorktreeURL(
-        repositoryRootPath: String,
-        preferredName: String,
-        fileManager: FileManager = .default
-    ) -> URL {
-        let container = worktreeContainerURL(for: repositoryRootPath)
-        let baseName = slug(preferredName, fallback: "workspace")
-
-        var attempt = 0
-        while true {
-            let suffix = attempt == 0 ? "" : "-\(attempt + 1)"
-            let candidate = container.appendingPathComponent(
-                "\(baseName)\(suffix)",
-                isDirectory: true
-            )
-            if !fileManager.fileExists(atPath: candidate.path()) {
-                return candidate
-            }
-            attempt += 1
-        }
+        return slug("\(repoName)-\(workspaceName)", fallback: "looper-session")
     }
 }
 

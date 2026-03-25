@@ -19,66 +19,30 @@ extension DependencyValues {
 extension RepoManagerClient: DependencyKey {
     static let liveValue = RepoManagerClient(
         createWorkspace: { request in
-            let fileManager = FileManager.default
-            let repositoryRootPath = try GitWorkspaceIO.resolveRepositoryRoot(
+            let projectDirectoryPath = try ProjectDirectoryIO.resolveProjectDirectory(
                 from: request.repositoryPath
             )
-            let worktreeURL = WorkspaceNaming.uniqueWorktreeURL(
-                repositoryRootPath: repositoryRootPath,
-                preferredName: request.name
-            )
-
-            try fileManager.createDirectory(
-                at: worktreeURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-
-            let branchExists = try GitWorkspaceIO.branchExists(
-                request.branchName,
-                repositoryRootPath: repositoryRootPath
-            )
-
-            if branchExists {
-                _ = try GitWorkspaceIO.runGit(
-                    arguments: [
-                        "-C",
-                        repositoryRootPath,
-                        "worktree",
-                        "add",
-                        worktreeURL.path(),
-                        request.branchName,
-                    ]
-                )
-            } else {
-                _ = try GitWorkspaceIO.runGit(
-                    arguments: [
-                        "-C",
-                        repositoryRootPath,
-                        "worktree",
-                        "add",
-                        "-b",
-                        request.branchName,
-                        worktreeURL.path(),
-                        request.baseBranch,
-                    ]
-                )
-            }
 
             return CodingWorkspace(
                 name: request.name,
-                repositoryRootPath: repositoryRootPath,
-                worktreePath: worktreeURL.path(),
-                branchName: request.branchName,
-                baseBranch: request.baseBranch,
+                repositoryRootPath: projectDirectoryPath,
+                worktreePath: projectDirectoryPath,
+                branchName: "",
+                baseBranch: "",
                 agentCommand: request.agentCommand,
                 tmuxSessionName: WorkspaceNaming.tmuxSessionName(
-                    repositoryRootPath: repositoryRootPath,
-                    branchName: request.branchName
+                    repositoryRootPath: projectDirectoryPath,
+                    workspaceName: request.name
                 )
             )
         },
         removeWorkspace: { workspace in
             _ = try? GitWorkspaceIO.killTmuxSession(named: workspace.tmuxSessionName)
+
+            guard !workspace.launchesProjectDirectoryDirectly else {
+                return
+            }
+
             _ = try GitWorkspaceIO.runGit(
                 arguments: [
                     "-C",
@@ -89,11 +53,6 @@ extension RepoManagerClient: DependencyKey {
                     workspace.worktreePath,
                 ]
             )
-
-            let worktreeDirectory = workspace.worktreeURL.deletingLastPathComponent()
-            if FileManager.default.fileExists(atPath: worktreeDirectory.path()) {
-                try? FileManager.default.removeItem(at: workspace.worktreeURL)
-            }
         },
         revealInFinder: { path in
             await MainActor.run {
@@ -103,14 +62,29 @@ extension RepoManagerClient: DependencyKey {
     )
 }
 
-private enum GitWorkspaceIO {
-    static func resolveRepositoryRoot(from path: String) throws -> String {
-        let output = try runGit(
-            arguments: ["-C", path, "rev-parse", "--show-toplevel"]
-        )
-        return output.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
+private enum ProjectDirectoryIO {
+    static func resolveProjectDirectory(from path: String) throws -> String {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            throw RepoManagerError(description: "Project directory is required.")
+        }
 
+        let expandedPath = NSString(string: trimmedPath).expandingTildeInPath
+        let standardizedPath = URL(fileURLWithPath: expandedPath).standardizedFileURL.path()
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: standardizedPath, isDirectory: &isDirectory) else {
+            throw RepoManagerError(description: "Project directory does not exist.")
+        }
+        guard isDirectory.boolValue else {
+            throw RepoManagerError(description: "Project path must point to a directory.")
+        }
+
+        return standardizedPath
+    }
+}
+
+private enum GitWorkspaceIO {
     static func branchExists(
         _ branchName: String,
         repositoryRootPath: String
