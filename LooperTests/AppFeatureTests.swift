@@ -17,13 +17,113 @@ actor PreferencesRecorder {
 
 @MainActor
 final class AppFeatureTests: XCTestCase {
-    func testInitialStateHasNoWorkspaces() async {
+    func testInitialStateHasNoTasksOrWorkspaces() async {
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
         }
 
+        XCTAssertTrue(store.state.tasks.isEmpty)
+        XCTAssertNil(store.state.selectedTaskID)
         XCTAssertTrue(store.state.workspace.workspaces.isEmpty)
         XCTAssertNil(store.state.workspace.selectedWorkspaceID)
+    }
+
+    func testOnAppearLoadsTasksAndSelectsFirstTask() async {
+        let firstTask = LooperTask(
+            id: "task-1",
+            title: "First",
+            summary: "First summary",
+            status: .pending,
+            source: "Mock Feishu",
+            repoPath: URL(filePath: "/tmp/first")
+        )
+        let secondTask = LooperTask(
+            id: "task-2",
+            title: "Second",
+            summary: "Second summary",
+            status: .pending,
+            source: "Mock Feishu",
+            repoPath: URL(filePath: "/tmp/second")
+        )
+
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.taskBoardClient.fetchTasks = { [firstTask, secondTask] }
+            $0.workspaceStoreClient.fetchWorkspaces = { [] }
+            $0.workspacePreferencesClient.fetchPreferences = { .init() }
+        }
+
+        await store.send(.onAppear) {
+            $0.isLoadingTasks = true
+        }
+        await store.receive(\.workspace.onAppear)
+        await store.receive(\.taskResponse) {
+            $0.isLoadingTasks = false
+            $0.tasks = [firstTask, secondTask]
+            $0.selectedTaskID = firstTask.id
+        }
+        await store.receive(\.workspace.bootstrapResponse.success)
+    }
+
+    func testStartSelectedTaskTriggersWorkspaceCreation() async {
+        let task = LooperTask(
+            id: "task-1",
+            title: "Start me",
+            summary: "Summary",
+            status: .pending,
+            source: "Mock Feishu",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let workspace = CodingWorkspace(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            repositoryRootPath: "/tmp/demo",
+            worktreePath: "/tmp/demo",
+            branchName: "",
+            baseBranch: "",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                selectedTaskID: task.id,
+                workspace: WorkspaceFeature.State()
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.repoManagerClient.createWorkspace = { _ in workspace }
+            $0.workspaceStoreClient.saveWorkspace = { _ in }
+            $0.workspacePreferencesClient.savePreferences = { _ in }
+            $0.terminalWorkspaceClient.upsertSession = { _ in }
+            $0.terminalWorkspaceClient.focusSession = { _ in }
+            $0.terminalWorkspaceClient.bootstrapSession = { _ in }
+        }
+
+        await store.send(.startSelectedTaskButtonTapped) {
+            $0.tasks[id: task.id]?.status = .developing
+        }
+        await store.receive(\.workspace.createWorkspaceFromDefaults) {
+            $0.workspace.composer = WorkspaceDraft(
+                name: "",
+                repositoryPath: "/tmp/demo",
+                agentCommand: "claude"
+            )
+            $0.workspace.isCreatingWorkspace = true
+        }
+        await store.receive(\.workspace.createWorkspaceResponse.success) {
+            $0.workspace.isCreatingWorkspace = false
+            $0.workspace.workspaces = [workspace]
+            $0.workspace.selectedWorkspaceID = workspace.id
+            $0.workspace.preferences = WorkspacePreferences(
+                defaultRepositoryPath: "/tmp/demo",
+                defaultAgentCommand: "claude",
+                lastSelectedWorkspaceID: workspace.id
+            )
+        }
     }
 
     func testOnAppearLoadsPersistedWorkspaces() async {
@@ -66,6 +166,48 @@ final class AppFeatureTests: XCTestCase {
                 defaultAgentCommand: "claude --dangerously-skip-permissions",
                 lastSelectedWorkspaceID: workspace.id
             ).draft
+        }
+    }
+
+    func testSelectingTaskSelectsMatchingWorkspace() async {
+        let task = LooperTask(
+            id: "task-1",
+            title: "Task",
+            summary: "Summary",
+            status: .pending,
+            source: "Mock Feishu",
+            repoPath: URL(filePath: "/tmp/repo")
+        )
+        let workspaceID = UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!
+        let workspace = CodingWorkspace(
+            id: workspaceID,
+            name: "Repo",
+            repositoryRootPath: "/tmp/repo",
+            worktreePath: "/tmp/repo",
+            branchName: "",
+            baseBranch: "",
+            agentCommand: "claude",
+            tmuxSessionName: "repo"
+        )
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                workspace: WorkspaceFeature.State(workspaces: [workspace])
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.workspacePreferencesClient.savePreferences = { _ in }
+            $0.terminalWorkspaceClient.focusSession = { _ in }
+        }
+
+        await store.send(.selectTask(task.id)) {
+            $0.selectedTaskID = task.id
+            $0.workspace.selectedWorkspaceID = workspaceID
+        }
+        await store.receive(\.workspace.selectWorkspace) {
+            $0.workspace.preferences.lastSelectedWorkspaceID = workspaceID
         }
     }
 
