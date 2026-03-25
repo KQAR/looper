@@ -34,11 +34,16 @@ struct WorkspaceFeature {
         case addWorkspaceButtonTapped
         case attachSelectedWorkspaceButtonTapped
         case bootstrapResponse(Result<BootstrapPayload, WorkspaceFailure>)
+        case createWorkspaceFromDefaults(String)
         case createWorkspaceButtonTapped
         case createWorkspaceResponse(Result<CodingWorkspace, WorkspaceFailure>)
         case dismissError
         case onAppear
+        case openProjectButtonTapped
+        case openProjectResponse(String?)
         case openInFinderButtonTapped(CodingWorkspace.ID)
+        case selectNextWorkspace
+        case selectPreviousWorkspace
         case rebuildWorkspaceButtonTapped(CodingWorkspace.ID)
         case removeWorkspaceButtonTapped(CodingWorkspace.ID)
         case removeWorkspaceResponse(CodingWorkspace.ID, Result<Void, WorkspaceFailure>)
@@ -48,6 +53,7 @@ struct WorkspaceFeature {
         case workspacePersistenceFailed(WorkspaceFailure)
     }
 
+    @Dependency(\.projectDirectoryPickerClient) var projectDirectoryPickerClient
     @Dependency(\.repoManagerClient) var repoManagerClient
     @Dependency(\.workspacePreferencesClient) var workspacePreferencesClient
     @Dependency(\.terminalWorkspaceClient) var terminalWorkspaceClient
@@ -89,6 +95,40 @@ struct WorkspaceFeature {
                 state.composer = state.preferences.draft
                 state.isComposerPresented = true
                 return .none
+
+            case .openProjectButtonTapped:
+                guard !state.isCreatingWorkspace else { return .none }
+                return .run { send in
+                    await send(.openProjectResponse(await projectDirectoryPickerClient.pickDirectory()))
+                }
+
+            case let .openProjectResponse(path):
+                guard let path else { return .none }
+                return .send(.createWorkspaceFromDefaults(path))
+
+            case let .createWorkspaceFromDefaults(path):
+                guard !state.isCreatingWorkspace else { return .none }
+                state.composer = WorkspaceDraft(
+                    name: "",
+                    repositoryPath: path,
+                    agentCommand: state.preferences.defaultAgentCommand
+                )
+
+                let request = CreateWorkspaceRequest(draft: state.composer)
+                state.isCreatingWorkspace = true
+
+                return .run { send in
+                    do {
+                        let workspace = try await repoManagerClient.createWorkspace(request)
+                        await send(.createWorkspaceResponse(.success(workspace)))
+                    } catch {
+                        await send(
+                            .createWorkspaceResponse(
+                                .failure(.init(description: error.localizedDescription))
+                            )
+                        )
+                    }
+                }
 
             case .createWorkspaceButtonTapped:
                 guard state.composer.canCreate, !state.isCreatingWorkspace else {
@@ -178,6 +218,22 @@ struct WorkspaceFeature {
                     guard let id else { return }
                     await terminalWorkspaceClient.focusSession(id)
                 }
+
+            case .selectPreviousWorkspace:
+                guard let previousID = adjacentWorkspaceID(
+                    from: state.selectedWorkspaceID,
+                    within: Array(state.workspaces.ids),
+                    direction: -1
+                ) else { return .none }
+                return .send(.selectWorkspace(previousID))
+
+            case .selectNextWorkspace:
+                guard let nextID = adjacentWorkspaceID(
+                    from: state.selectedWorkspaceID,
+                    within: Array(state.workspaces.ids),
+                    direction: 1
+                ) else { return .none }
+                return .send(.selectWorkspace(nextID))
 
             case .savePreferencesButtonTapped:
                 guard !state.isSavingPreferences else { return .none }
@@ -271,4 +327,19 @@ private func selectedWorkspaceID(
     }
 
     return availableIDs.first
+}
+
+private func adjacentWorkspaceID(
+    from currentID: UUID?,
+    within ids: [UUID],
+    direction: Int
+) -> UUID? {
+    guard !ids.isEmpty else { return nil }
+
+    guard let currentID, let currentIndex = ids.firstIndex(of: currentID) else {
+        return ids.first
+    }
+
+    let nextIndex = (currentIndex + direction + ids.count) % ids.count
+    return ids[nextIndex]
 }

@@ -65,6 +65,32 @@ struct WorkspaceView: View {
                 Spacer()
 
                 Button {
+                    store.send(.selectPreviousWorkspace)
+                } label: {
+                    Image(systemName: "chevron.up")
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.workspaces.isEmpty)
+                .keyboardShortcut(.upArrow, modifiers: [.command])
+
+                Button {
+                    store.send(.selectNextWorkspace)
+                } label: {
+                    Image(systemName: "chevron.down")
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.workspaces.isEmpty)
+                .keyboardShortcut(.downArrow, modifiers: [.command])
+
+                Button {
+                    store.send(.openProjectButtonTapped)
+                } label: {
+                    Label("Open", systemImage: "folder.badge.plus")
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.isCreatingWorkspace)
+
+                Button {
                     store.send(.addWorkspaceButtonTapped)
                 } label: {
                     Label("New", systemImage: "plus")

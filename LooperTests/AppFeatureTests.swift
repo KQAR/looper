@@ -122,6 +122,183 @@ final class AppFeatureTests: XCTestCase {
         XCTAssertEqual(savedPreferences?.lastSelectedWorkspaceID, secondID)
     }
 
+    func testBootstrapRestoresLastSelectedWorkspace() async {
+        let first = CodingWorkspace(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "First",
+            repositoryRootPath: "/tmp/first",
+            worktreePath: "/tmp/first",
+            branchName: "",
+            baseBranch: "",
+            agentCommand: "claude",
+            tmuxSessionName: "first"
+        )
+        let second = CodingWorkspace(
+            id: UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!,
+            name: "Second",
+            repositoryRootPath: "/tmp/second",
+            worktreePath: "/tmp/second",
+            branchName: "",
+            baseBranch: "",
+            agentCommand: "claude",
+            tmuxSessionName: "second"
+        )
+
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.workspaceStoreClient.fetchWorkspaces = { [first, second] }
+            $0.workspacePreferencesClient.fetchPreferences = {
+                WorkspacePreferences(
+                    defaultRepositoryPath: "/tmp",
+                    defaultAgentCommand: "claude",
+                    lastSelectedWorkspaceID: second.id
+                )
+            }
+            $0.terminalWorkspaceClient.upsertSession = { _ in }
+        }
+
+        await store.send(.workspace(.onAppear))
+        await store.receive(\.workspace.bootstrapResponse.success) {
+            $0.workspace.workspaces = [first, second]
+            $0.workspace.selectedWorkspaceID = second.id
+            $0.workspace.preferences = WorkspacePreferences(
+                defaultRepositoryPath: "/tmp",
+                defaultAgentCommand: "claude",
+                lastSelectedWorkspaceID: second.id
+            )
+            $0.workspace.composer = WorkspacePreferences(
+                defaultRepositoryPath: "/tmp",
+                defaultAgentCommand: "claude",
+                lastSelectedWorkspaceID: second.id
+            ).draft
+        }
+    }
+
+    func testQuickSwitchSelectsNextWorkspace() async {
+        let firstID = UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!
+        let secondID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
+        let first = CodingWorkspace(
+            id: firstID,
+            name: "First",
+            repositoryRootPath: "/tmp/first",
+            worktreePath: "/tmp/first",
+            branchName: "",
+            baseBranch: "",
+            agentCommand: "claude",
+            tmuxSessionName: "first"
+        )
+        let second = CodingWorkspace(
+            id: secondID,
+            name: "Second",
+            repositoryRootPath: "/tmp/second",
+            worktreePath: "/tmp/second",
+            branchName: "",
+            baseBranch: "",
+            agentCommand: "claude",
+            tmuxSessionName: "second"
+        )
+        let recorder = PreferencesRecorder()
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                workspace: WorkspaceFeature.State(
+                    workspaces: [first, second],
+                    selectedWorkspaceID: firstID,
+                    preferences: WorkspacePreferences(
+                        defaultRepositoryPath: "/tmp",
+                        defaultAgentCommand: "claude",
+                        lastSelectedWorkspaceID: firstID
+                    )
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.workspacePreferencesClient.savePreferences = { await recorder.record($0) }
+            $0.terminalWorkspaceClient.focusSession = { _ in }
+        }
+
+        await store.send(.workspace(.selectNextWorkspace))
+        await store.receive(\.workspace.selectWorkspace) {
+            $0.workspace.selectedWorkspaceID = secondID
+            $0.workspace.preferences.lastSelectedWorkspaceID = secondID
+        }
+
+        let savedPreferences = await recorder.value()
+        XCTAssertEqual(savedPreferences?.lastSelectedWorkspaceID, secondID)
+    }
+
+    func testOpenProjectUsesDefaultsAndCreatesWorkspace() async {
+        let workspace = CodingWorkspace(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            repositoryRootPath: "/tmp/demo",
+            worktreePath: "/tmp/demo",
+            branchName: "",
+            baseBranch: "",
+            agentCommand: "claude --resume",
+            tmuxSessionName: "demo"
+        )
+        actor RequestRecorder {
+            var request: CreateWorkspaceRequest?
+            func record(_ request: CreateWorkspaceRequest) { self.request = request }
+            func value() -> CreateWorkspaceRequest? { request }
+        }
+        let recorder = RequestRecorder()
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                workspace: WorkspaceFeature.State(
+                    preferences: WorkspacePreferences(
+                        defaultRepositoryPath: "",
+                        defaultAgentCommand: "claude --resume",
+                        lastSelectedWorkspaceID: nil
+                    )
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.projectDirectoryPickerClient.pickDirectory = { "/tmp/demo" }
+            $0.repoManagerClient.createWorkspace = { request in
+                await recorder.record(request)
+                return workspace
+            }
+            $0.workspaceStoreClient.saveWorkspace = { _ in }
+            $0.workspacePreferencesClient.savePreferences = { _ in }
+            $0.terminalWorkspaceClient.upsertSession = { _ in }
+            $0.terminalWorkspaceClient.focusSession = { _ in }
+            $0.terminalWorkspaceClient.bootstrapSession = { _ in }
+        }
+
+        await store.send(.workspace(.openProjectButtonTapped))
+        await store.receive(\.workspace.openProjectResponse)
+        await store.receive(\.workspace.createWorkspaceFromDefaults) {
+            $0.workspace.composer = WorkspaceDraft(
+                name: "",
+                repositoryPath: "/tmp/demo",
+                agentCommand: "claude --resume"
+            )
+            $0.workspace.isCreatingWorkspace = true
+        }
+        await store.receive(\.workspace.createWorkspaceResponse.success) {
+            $0.workspace.isCreatingWorkspace = false
+            $0.workspace.workspaces = [workspace]
+            $0.workspace.selectedWorkspaceID = workspace.id
+            $0.workspace.preferences = WorkspacePreferences(
+                defaultRepositoryPath: "/tmp/demo",
+                defaultAgentCommand: "claude --resume",
+                lastSelectedWorkspaceID: workspace.id
+            )
+        }
+
+        let capturedRequest = await recorder.value()
+        XCTAssertEqual(capturedRequest?.repositoryPath, "/tmp/demo")
+        XCTAssertEqual(capturedRequest?.agentCommand, "claude --resume")
+        XCTAssertEqual(capturedRequest?.name, "demo")
+    }
+
     func testSavingPreferencesPersistsDefaults() async {
         let recorder = PreferencesRecorder()
         let preferences = WorkspacePreferences(
