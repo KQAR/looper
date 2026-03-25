@@ -31,6 +31,7 @@ let project = Project(
             resources: ["Looper/Resources/**"],
             dependencies: [
                 .external(name: "ComposableArchitecture"),
+                .external(name: "GRDB"),
                 .external(name: "GhosttyTerminal"),
             ]
         ),

@@ -1,21 +1,15 @@
 import ComposableArchitecture
 import SwiftUI
 
+@MainActor
 struct AppView: View {
-    @Bindable var store: StoreOf<AppFeature>
+    let store: StoreOf<AppFeature>
+    let terminalRegistry: WorkspaceTerminalRegistry
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                Text("Tasks")
-            }
-            .navigationTitle("Looper")
-        } detail: {
-            Text("Select a task")
-                .foregroundStyle(.secondary)
-        }
-        .onAppear {
-            store.send(.onAppear)
-        }
+        WorkspaceView(
+            store: store.scope(state: \.workspace, action: \.workspace),
+            terminalRegistry: terminalRegistry
+        )
     }
 }
