@@ -3,8 +3,8 @@ import GhosttyTerminal
 import SwiftUI
 
 @MainActor
-struct WorkspaceTerminalRepresentable: NSViewRepresentable {
-    let session: WorkspaceTerminalSession
+struct PipelineTerminalRepresentable: NSViewRepresentable {
+    let session: PipelineTerminalSession
 
     func makeNSView(context _: Context) -> AppTerminalView {
         let view = AppTerminalView(frame: .zero)

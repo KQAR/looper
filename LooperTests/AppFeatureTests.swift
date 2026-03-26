@@ -4,13 +4,13 @@ import XCTest
 @testable import Looper
 
 actor PreferencesRecorder {
-    private var preferences: WorkspacePreferences?
+    private var preferences: AppPreferences?
 
-    func record(_ preferences: WorkspacePreferences) {
+    func record(_ preferences: AppPreferences) {
         self.preferences = preferences
     }
 
-    func value() -> WorkspacePreferences? {
+    func value() -> AppPreferences? {
         preferences
     }
 }
@@ -29,24 +29,24 @@ actor TaskStatusRecorder {
 
 @MainActor
 final class AppFeatureTests: XCTestCase {
-    func testInitialStateHasNoTasksOrWorkspaces() async {
+    func testInitialStateHasNoTasksOrPipelines() async {
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
         }
 
         XCTAssertTrue(store.state.tasks.isEmpty)
         XCTAssertNil(store.state.selectedTaskID)
-        XCTAssertTrue(store.state.workspace.workspaces.isEmpty)
-        XCTAssertNil(store.state.workspace.selectedWorkspaceID)
+        XCTAssertTrue(store.state.pipeline.pipelines.isEmpty)
+        XCTAssertNil(store.state.pipeline.selectedPipelineID)
     }
 
     func testOnAppearShowsSetupWizardWhenSetupIncomplete() async {
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
         } withDependencies: {
-            $0.workspaceStoreClient.fetchWorkspaces = { [] }
-            $0.workspacePreferencesClient.fetchPreferences = { .init() }
-            $0.terminalWorkspaceClient.events = {
+            $0.pipelineStoreClient.fetchPipelines = { [] }
+            $0.appPreferencesClient.fetchPreferences = { .init() }
+            $0.pipelineTerminalClient.events = {
                 AsyncStream { continuation in
                     continuation.finish()
                 }
@@ -54,8 +54,8 @@ final class AppFeatureTests: XCTestCase {
         }
 
         await store.send(.onAppear)
-        await store.receive(\.workspace.onAppear)
-        await store.receive(\.workspace.bootstrapResponse.success) {
+        await store.receive(\.pipeline.onAppear)
+        await store.receive(\.pipeline.bootstrapResponse.success) {
             $0.isSetupWizardPresented = true
             $0.setupStep = .welcome
         }
@@ -78,25 +78,26 @@ final class AppFeatureTests: XCTestCase {
             source: "Mock Feishu",
             repoPath: URL(filePath: "/tmp/second")
         )
-        let configuration = TaskBoardConfiguration(
+        let configuration = FeishuTaskProviderConfiguration(
             appID: "cli_xxx",
             appSecret: "secret",
             appToken: "app_token",
             tableID: "tbl_tasks"
         )
+        let providerConfiguration = TaskProviderConfiguration(kind: .feishu, feishu: configuration)
 
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
         } withDependencies: {
-            $0.taskBoardClient.fetchTasks = { _ in [firstTask, secondTask] }
-            $0.workspaceStoreClient.fetchWorkspaces = { [] }
-            $0.workspacePreferencesClient.fetchPreferences = {
-                WorkspacePreferences(
-                    taskBoardConfiguration: configuration,
+            $0.taskProviderClient.fetchTasks = { _ in [firstTask, secondTask] }
+            $0.pipelineStoreClient.fetchPipelines = { [] }
+            $0.appPreferencesClient.fetchPreferences = {
+                AppPreferences(
+                    taskProviderConfiguration: providerConfiguration,
                     hasCompletedOnboarding: true
                 )
             }
-            $0.terminalWorkspaceClient.events = {
+            $0.pipelineTerminalClient.events = {
                 AsyncStream { continuation in
                     continuation.finish()
                 }
@@ -104,14 +105,14 @@ final class AppFeatureTests: XCTestCase {
         }
 
         await store.send(.onAppear)
-        await store.receive(\.workspace.onAppear)
-        await store.receive(\.workspace.bootstrapResponse.success) {
-            $0.workspace.preferences = WorkspacePreferences(
-                taskBoardConfiguration: configuration,
+        await store.receive(\.pipeline.onAppear)
+        await store.receive(\.pipeline.bootstrapResponse.success) {
+            $0.pipeline.preferences = AppPreferences(
+                taskProviderConfiguration: providerConfiguration,
                 hasCompletedOnboarding: true
             )
-            $0.workspace.composer = WorkspacePreferences(
-                taskBoardConfiguration: configuration,
+            $0.pipeline.composer = AppPreferences(
+                taskProviderConfiguration: providerConfiguration,
                 hasCompletedOnboarding: true
             ).draft
         }
@@ -125,7 +126,7 @@ final class AppFeatureTests: XCTestCase {
         }
     }
 
-    func testStartSelectedTaskTriggersWorkspaceCreation() async {
+    func testStartSelectedTaskTriggersPipelineCreation() async {
         let task = LooperTask(
             id: "task-1",
             title: "Start me",
@@ -134,102 +135,122 @@ final class AppFeatureTests: XCTestCase {
             source: "Mock Feishu",
             repoPath: URL(filePath: "/tmp/demo")
         )
-        let workspace = CodingWorkspace(
+        let pipeline = Pipeline(
             id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
             name: "demo",
-            repositoryRootPath: "/tmp/demo",
-            worktreePath: "/tmp/demo",
-            branchName: "",
-            baseBranch: "",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
             agentCommand: "claude",
             tmuxSessionName: "demo"
         )
+        let recorder = TaskStatusRecorder()
 
         let store = TestStore(
             initialState: AppFeature.State(
                 tasks: [task],
                 selectedTaskID: task.id,
-                workspace: WorkspaceFeature.State()
+                pipeline: PipelineFeature.State()
             )
         ) {
             AppFeature()
         } withDependencies: {
-            $0.repoManagerClient.createWorkspace = { _ in workspace }
-            $0.workspaceStoreClient.saveWorkspace = { _ in }
-            $0.workspacePreferencesClient.savePreferences = { _ in }
-            $0.terminalWorkspaceClient.upsertSession = { _ in }
-            $0.terminalWorkspaceClient.focusSession = { _ in }
-            $0.terminalWorkspaceClient.bootstrapSession = { _ in }
+            $0.pipelineManagerClient.createPipeline = { _ in pipeline }
+            $0.pipelineStoreClient.savePipeline = { _ in }
+            $0.appPreferencesClient.savePreferences = { _ in }
+            $0.pipelineTerminalClient.upsertSession = { _ in }
+            $0.pipelineTerminalClient.focusSession = { _ in }
+            $0.pipelineTerminalClient.bootstrapSession = { _ in }
+            $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
+                await recorder.record(taskID, status)
+            }
         }
 
         await store.send(.startSelectedTaskButtonTapped)
-        await store.receive(\.workspace.createWorkspaceFromDefaults) {
-            $0.workspace.composer = WorkspaceDraft(
+        await store.receive(\.pipeline.createPipelineFromDefaults) {
+            $0.pipeline.composer = PipelineDraft(
                 name: "",
-                repositoryPath: "/tmp/demo",
+                projectPath: "/tmp/demo",
                 agentCommand: "claude"
             )
-            $0.workspace.isCreatingWorkspace = true
+            $0.pipeline.isCreatingPipeline = true
         }
-        await store.receive(\.workspace.createWorkspaceResponse.success) {
-            $0.workspace.isCreatingWorkspace = false
-            $0.workspace.workspaces = [workspace]
-            $0.workspace.selectedWorkspaceID = workspace.id
-            $0.workspace.preferences = WorkspacePreferences(
-                defaultRepositoryPath: "/tmp/demo",
+        await store.receive(\.pipeline.createPipelineResponse.success) {
+            $0.pipeline.isCreatingPipeline = false
+            $0.pipeline.pipelines = [pipeline]
+            $0.pipeline.selectedPipelineID = pipeline.id
+            $0.updatingTaskIDs = [task.id]
+            $0.pipeline.preferences = AppPreferences(
+                defaultProjectPath: "/tmp/demo",
                 defaultAgentCommand: "claude",
-                lastSelectedWorkspaceID: workspace.id
+                lastSelectedPipelineID: pipeline.id
             )
         }
+        await store.receive(\.taskStatusUpdateResponse.success) {
+            $0.updatingTaskIDs = []
+            $0.tasks[id: task.id]?.status = .developing
+        }
+
+        let events = await recorder.value()
+        XCTAssertEqual(events.first?.0, task.id)
+        XCTAssertEqual(events.first?.1, .developing)
     }
 
-    func testOnAppearLoadsPersistedWorkspaces() async {
-        let workspace = CodingWorkspace(
+    func testOnAppearLoadsPersistedPipelines() async {
+        let pipeline = Pipeline(
             id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
-            name: "Persisted Workspace",
-            repositoryRootPath: "/tmp/repo",
-            worktreePath: "/tmp/.looper-worktrees/repo/persisted-workspace",
-            branchName: "looper/persisted-workspace",
-            baseBranch: "main",
+            name: "Persisted Pipeline",
+            projectPath: "/tmp/repo",
+            executionPath: "/tmp/repo",
             agentCommand: "claude",
-            tmuxSessionName: "repo-looper-persisted-workspace"
+            tmuxSessionName: "repo-persisted-pipeline"
         )
 
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
         } withDependencies: {
-            $0.workspaceStoreClient.fetchWorkspaces = { [workspace] }
-            $0.workspacePreferencesClient.fetchPreferences = {
-                WorkspacePreferences(
-                    defaultRepositoryPath: "/tmp/repo",
+            $0.pipelineStoreClient.fetchPipelines = { [pipeline] }
+            $0.appPreferencesClient.fetchPreferences = {
+                AppPreferences(
+                    defaultProjectPath: "/tmp/repo",
                     defaultAgentCommand: "claude --dangerously-skip-permissions",
-                    lastSelectedWorkspaceID: workspace.id,
+                    lastSelectedPipelineID: pipeline.id,
                     hasCompletedOnboarding: true
                 )
             }
-            $0.terminalWorkspaceClient.upsertSession = { _ in }
+            $0.pipelineTerminalClient.upsertSession = { _ in }
+            $0.taskProviderClient.fetchTasks = { _ in [] }
         }
 
-        await store.send(.workspace(.onAppear))
-        await store.receive(\.workspace.bootstrapResponse.success) {
-            $0.workspace.workspaces = [workspace]
-            $0.workspace.selectedWorkspaceID = workspace.id
-            $0.workspace.preferences = WorkspacePreferences(
-                defaultRepositoryPath: "/tmp/repo",
+        await store.send(.pipeline(.onAppear))
+        await store.receive(\.pipeline.bootstrapResponse.success) {
+            $0.pipeline.pipelines = [pipeline]
+            $0.pipeline.selectedPipelineID = pipeline.id
+            $0.pipeline.preferences = AppPreferences(
+                defaultProjectPath: "/tmp/repo",
                 defaultAgentCommand: "claude --dangerously-skip-permissions",
-                lastSelectedWorkspaceID: workspace.id,
+                lastSelectedPipelineID: pipeline.id,
                 hasCompletedOnboarding: true
             )
-            $0.workspace.composer = WorkspacePreferences(
-                defaultRepositoryPath: "/tmp/repo",
+            $0.pipeline.composer = AppPreferences(
+                defaultProjectPath: "/tmp/repo",
                 defaultAgentCommand: "claude --dangerously-skip-permissions",
-                lastSelectedWorkspaceID: workspace.id,
+                lastSelectedPipelineID: pipeline.id,
                 hasCompletedOnboarding: true
             ).draft
         }
+        await store.receive(\.refreshTasksButtonTapped) {
+            $0.isLoadingTasks = true
+        }
+        await store.receive(\.taskResponse.success) {
+            $0.isLoadingTasks = false
+        }
+        await store.receive(\.pipeline.selectPipeline) {
+            $0.pipeline.selectedPipelineID = nil
+            $0.pipeline.preferences.lastSelectedPipelineID = nil
+        }
     }
 
-    func testSelectingTaskSelectsMatchingWorkspace() async {
+    func testSelectingTaskSelectsMatchingPipeline() async {
         let task = LooperTask(
             id: "task-1",
             title: "Task",
@@ -238,14 +259,12 @@ final class AppFeatureTests: XCTestCase {
             source: "Mock Feishu",
             repoPath: URL(filePath: "/tmp/repo")
         )
-        let workspaceID = UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!
-        let workspace = CodingWorkspace(
-            id: workspaceID,
+        let pipelineID = UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!
+        let pipeline = Pipeline(
+            id: pipelineID,
             name: "Repo",
-            repositoryRootPath: "/tmp/repo",
-            worktreePath: "/tmp/repo",
-            branchName: "",
-            baseBranch: "",
+            projectPath: "/tmp/repo",
+            executionPath: "/tmp/repo",
             agentCommand: "claude",
             tmuxSessionName: "repo"
         )
@@ -253,44 +272,40 @@ final class AppFeatureTests: XCTestCase {
         let store = TestStore(
             initialState: AppFeature.State(
                 tasks: [task],
-                workspace: WorkspaceFeature.State(workspaces: [workspace])
+                pipeline: PipelineFeature.State(pipelines: [pipeline])
             )
         ) {
             AppFeature()
         } withDependencies: {
-            $0.workspacePreferencesClient.savePreferences = { _ in }
-            $0.terminalWorkspaceClient.focusSession = { _ in }
+            $0.appPreferencesClient.savePreferences = { _ in }
+            $0.pipelineTerminalClient.focusSession = { _ in }
         }
 
         await store.send(.selectTask(task.id)) {
             $0.selectedTaskID = task.id
-            $0.workspace.selectedWorkspaceID = workspaceID
+            $0.pipeline.selectedPipelineID = pipelineID
         }
-        await store.receive(\.workspace.selectWorkspace) {
-            $0.workspace.preferences.lastSelectedWorkspaceID = workspaceID
+        await store.receive(\.pipeline.selectPipeline) {
+            $0.pipeline.preferences.lastSelectedPipelineID = pipelineID
         }
     }
 
-    func testSelectingWorkspacePersistsSelection() async {
+    func testSelectingPipelinePersistsSelection() async {
         let firstID = UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!
         let secondID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
-        let first = CodingWorkspace(
+        let first = Pipeline(
             id: firstID,
             name: "First",
-            repositoryRootPath: "/tmp/repo",
-            worktreePath: "/tmp/first",
-            branchName: "looper/first",
-            baseBranch: "main",
+            projectPath: "/tmp/repo",
+            executionPath: "/tmp/first",
             agentCommand: "claude",
             tmuxSessionName: "repo-first"
         )
-        let second = CodingWorkspace(
+        let second = Pipeline(
             id: secondID,
             name: "Second",
-            repositoryRootPath: "/tmp/repo",
-            worktreePath: "/tmp/second",
-            branchName: "looper/second",
-            baseBranch: "main",
+            projectPath: "/tmp/repo",
+            executionPath: "/tmp/second",
             agentCommand: "claude",
             tmuxSessionName: "repo-second"
         )
@@ -298,108 +313,48 @@ final class AppFeatureTests: XCTestCase {
 
         let store = TestStore(
             initialState: AppFeature.State(
-                workspace: WorkspaceFeature.State(
-                    workspaces: [first, second],
-                    selectedWorkspaceID: firstID,
-                    preferences: WorkspacePreferences(
-                        defaultRepositoryPath: "/tmp/repo",
+                pipeline: PipelineFeature.State(
+                    pipelines: [first, second],
+                    selectedPipelineID: firstID,
+                    preferences: AppPreferences(
+                        defaultProjectPath: "/tmp/repo",
                         defaultAgentCommand: "claude",
-                        lastSelectedWorkspaceID: firstID
+                        lastSelectedPipelineID: firstID
                     )
                 )
             )
         ) {
             AppFeature()
         } withDependencies: {
-            $0.workspacePreferencesClient.savePreferences = { await recorder.record($0) }
-            $0.terminalWorkspaceClient.focusSession = { _ in }
+            $0.appPreferencesClient.savePreferences = { await recorder.record($0) }
+            $0.pipelineTerminalClient.focusSession = { _ in }
         }
 
-        await store.send(.workspace(.selectWorkspace(secondID))) {
-            $0.workspace.selectedWorkspaceID = secondID
-            $0.workspace.preferences.lastSelectedWorkspaceID = secondID
+        await store.send(.pipeline(.selectPipeline(secondID))) {
+            $0.pipeline.selectedPipelineID = secondID
+            $0.pipeline.preferences.lastSelectedPipelineID = secondID
         }
 
         let savedPreferences = await recorder.value()
-        XCTAssertEqual(savedPreferences?.lastSelectedWorkspaceID, secondID)
+        XCTAssertEqual(savedPreferences?.lastSelectedPipelineID, secondID)
     }
 
-    func testBootstrapRestoresLastSelectedWorkspace() async {
-        let first = CodingWorkspace(
-            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
-            name: "First",
-            repositoryRootPath: "/tmp/first",
-            worktreePath: "/tmp/first",
-            branchName: "",
-            baseBranch: "",
-            agentCommand: "claude",
-            tmuxSessionName: "first"
-        )
-        let second = CodingWorkspace(
-            id: UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!,
-            name: "Second",
-            repositoryRootPath: "/tmp/second",
-            worktreePath: "/tmp/second",
-            branchName: "",
-            baseBranch: "",
-            agentCommand: "claude",
-            tmuxSessionName: "second"
-        )
-
-        let store = TestStore(initialState: AppFeature.State()) {
-            AppFeature()
-        } withDependencies: {
-            $0.workspaceStoreClient.fetchWorkspaces = { [first, second] }
-            $0.workspacePreferencesClient.fetchPreferences = {
-                WorkspacePreferences(
-                    defaultRepositoryPath: "/tmp",
-                    defaultAgentCommand: "claude",
-                    lastSelectedWorkspaceID: second.id,
-                    hasCompletedOnboarding: true
-                )
-            }
-            $0.terminalWorkspaceClient.upsertSession = { _ in }
-        }
-
-        await store.send(.workspace(.onAppear))
-        await store.receive(\.workspace.bootstrapResponse.success) {
-            $0.workspace.workspaces = [first, second]
-            $0.workspace.selectedWorkspaceID = second.id
-            $0.workspace.preferences = WorkspacePreferences(
-                defaultRepositoryPath: "/tmp",
-                defaultAgentCommand: "claude",
-                lastSelectedWorkspaceID: second.id,
-                hasCompletedOnboarding: true
-            )
-            $0.workspace.composer = WorkspacePreferences(
-                defaultRepositoryPath: "/tmp",
-                defaultAgentCommand: "claude",
-                lastSelectedWorkspaceID: second.id,
-                hasCompletedOnboarding: true
-            ).draft
-        }
-    }
-
-    func testQuickSwitchSelectsNextWorkspace() async {
+    func testQuickSwitchSelectsNextPipeline() async {
         let firstID = UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!
         let secondID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
-        let first = CodingWorkspace(
+        let first = Pipeline(
             id: firstID,
             name: "First",
-            repositoryRootPath: "/tmp/first",
-            worktreePath: "/tmp/first",
-            branchName: "",
-            baseBranch: "",
+            projectPath: "/tmp/first",
+            executionPath: "/tmp/first",
             agentCommand: "claude",
             tmuxSessionName: "first"
         )
-        let second = CodingWorkspace(
+        let second = Pipeline(
             id: secondID,
             name: "Second",
-            repositoryRootPath: "/tmp/second",
-            worktreePath: "/tmp/second",
-            branchName: "",
-            baseBranch: "",
+            projectPath: "/tmp/second",
+            executionPath: "/tmp/second",
             agentCommand: "claude",
             tmuxSessionName: "second"
         )
@@ -407,58 +362,56 @@ final class AppFeatureTests: XCTestCase {
 
         let store = TestStore(
             initialState: AppFeature.State(
-                workspace: WorkspaceFeature.State(
-                    workspaces: [first, second],
-                    selectedWorkspaceID: firstID,
-                    preferences: WorkspacePreferences(
-                        defaultRepositoryPath: "/tmp",
+                pipeline: PipelineFeature.State(
+                    pipelines: [first, second],
+                    selectedPipelineID: firstID,
+                    preferences: AppPreferences(
+                        defaultProjectPath: "/tmp",
                         defaultAgentCommand: "claude",
-                        lastSelectedWorkspaceID: firstID
+                        lastSelectedPipelineID: firstID
                     )
                 )
             )
         ) {
             AppFeature()
         } withDependencies: {
-            $0.workspacePreferencesClient.savePreferences = { await recorder.record($0) }
-            $0.terminalWorkspaceClient.focusSession = { _ in }
+            $0.appPreferencesClient.savePreferences = { await recorder.record($0) }
+            $0.pipelineTerminalClient.focusSession = { _ in }
         }
 
-        await store.send(.workspace(.selectNextWorkspace))
-        await store.receive(\.workspace.selectWorkspace) {
-            $0.workspace.selectedWorkspaceID = secondID
-            $0.workspace.preferences.lastSelectedWorkspaceID = secondID
+        await store.send(.pipeline(.selectNextPipeline))
+        await store.receive(\.pipeline.selectPipeline) {
+            $0.pipeline.selectedPipelineID = secondID
+            $0.pipeline.preferences.lastSelectedPipelineID = secondID
         }
 
         let savedPreferences = await recorder.value()
-        XCTAssertEqual(savedPreferences?.lastSelectedWorkspaceID, secondID)
+        XCTAssertEqual(savedPreferences?.lastSelectedPipelineID, secondID)
     }
 
-    func testOpenProjectUsesDefaultsAndCreatesWorkspace() async {
-        let workspace = CodingWorkspace(
+    func testOpenProjectUsesDefaultsAndCreatesPipeline() async {
+        let pipeline = Pipeline(
             id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
             name: "demo",
-            repositoryRootPath: "/tmp/demo",
-            worktreePath: "/tmp/demo",
-            branchName: "",
-            baseBranch: "",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
             agentCommand: "claude --resume",
             tmuxSessionName: "demo"
         )
         actor RequestRecorder {
-            var request: CreateWorkspaceRequest?
-            func record(_ request: CreateWorkspaceRequest) { self.request = request }
-            func value() -> CreateWorkspaceRequest? { request }
+            var request: CreatePipelineRequest?
+            func record(_ request: CreatePipelineRequest) { self.request = request }
+            func value() -> CreatePipelineRequest? { request }
         }
         let recorder = RequestRecorder()
 
         let store = TestStore(
             initialState: AppFeature.State(
-                workspace: WorkspaceFeature.State(
-                    preferences: WorkspacePreferences(
-                        defaultRepositoryPath: "",
+                pipeline: PipelineFeature.State(
+                    preferences: AppPreferences(
+                        defaultProjectPath: "",
                         defaultAgentCommand: "claude --resume",
-                        lastSelectedWorkspaceID: nil
+                        lastSelectedPipelineID: nil
                     )
                 )
             )
@@ -466,84 +419,93 @@ final class AppFeatureTests: XCTestCase {
             AppFeature()
         } withDependencies: {
             $0.projectDirectoryPickerClient.pickDirectory = { "/tmp/demo" }
-            $0.repoManagerClient.createWorkspace = { request in
+            $0.pipelineManagerClient.createPipeline = { request in
                 await recorder.record(request)
-                return workspace
+                return pipeline
             }
-            $0.workspaceStoreClient.saveWorkspace = { _ in }
-            $0.workspacePreferencesClient.savePreferences = { _ in }
-            $0.terminalWorkspaceClient.upsertSession = { _ in }
-            $0.terminalWorkspaceClient.focusSession = { _ in }
-            $0.terminalWorkspaceClient.bootstrapSession = { _ in }
+            $0.pipelineStoreClient.savePipeline = { _ in }
+            $0.appPreferencesClient.savePreferences = { _ in }
+            $0.pipelineTerminalClient.upsertSession = { _ in }
+            $0.pipelineTerminalClient.focusSession = { _ in }
+            $0.pipelineTerminalClient.bootstrapSession = { _ in }
         }
 
-        await store.send(.workspace(.openProjectButtonTapped))
-        await store.receive(\.workspace.openProjectResponse)
-        await store.receive(\.workspace.createWorkspaceFromDefaults) {
-            $0.workspace.composer = WorkspaceDraft(
+        await store.send(.pipeline(.openProjectButtonTapped))
+        await store.receive(\.pipeline.openProjectResponse)
+        await store.receive(\.pipeline.createPipelineFromDefaults) {
+            $0.pipeline.composer = PipelineDraft(
                 name: "",
-                repositoryPath: "/tmp/demo",
+                projectPath: "/tmp/demo",
                 agentCommand: "claude --resume"
             )
-            $0.workspace.isCreatingWorkspace = true
+            $0.pipeline.isCreatingPipeline = true
         }
-        await store.receive(\.workspace.createWorkspaceResponse.success) {
-            $0.workspace.isCreatingWorkspace = false
-            $0.workspace.workspaces = [workspace]
-            $0.workspace.selectedWorkspaceID = workspace.id
-            $0.workspace.preferences = WorkspacePreferences(
-                defaultRepositoryPath: "/tmp/demo",
+        await store.receive(\.pipeline.createPipelineResponse.success) {
+            $0.pipeline.isCreatingPipeline = false
+            $0.pipeline.pipelines = [pipeline]
+            $0.pipeline.selectedPipelineID = pipeline.id
+            $0.pipeline.preferences = AppPreferences(
+                defaultProjectPath: "/tmp/demo",
                 defaultAgentCommand: "claude --resume",
-                lastSelectedWorkspaceID: workspace.id
+                lastSelectedPipelineID: pipeline.id
             )
         }
 
         let capturedRequest = await recorder.value()
-        XCTAssertEqual(capturedRequest?.repositoryPath, "/tmp/demo")
+        XCTAssertEqual(capturedRequest?.projectPath, "/tmp/demo")
         XCTAssertEqual(capturedRequest?.agentCommand, "claude --resume")
         XCTAssertEqual(capturedRequest?.name, "demo")
     }
 
     func testSavingPreferencesPersistsDefaults() async {
         let recorder = PreferencesRecorder()
-        let preferences = WorkspacePreferences(
-            defaultRepositoryPath: "/tmp/repo",
+        let preferences = AppPreferences(
+            defaultProjectPath: "/tmp/repo",
             defaultAgentCommand: "claude --model sonnet",
-            lastSelectedWorkspaceID: nil
+            lastSelectedPipelineID: nil
         )
-        let initialWorkspaceState = WorkspaceFeature.State(
+        let initialPipelineState = PipelineFeature.State(
             preferences: preferences
         )
         let initialState = AppFeature.State(
-            workspace: initialWorkspaceState
+            pipeline: initialPipelineState
         )
 
         let store = TestStore(initialState: initialState) {
             AppFeature()
         } withDependencies: {
-            $0.workspacePreferencesClient.savePreferences = { await recorder.record($0) }
+            $0.appPreferencesClient.savePreferences = { await recorder.record($0) }
+            $0.taskProviderClient.fetchTasks = { _ in [] }
         }
 
-        await store.send(.workspace(.savePreferencesButtonTapped)) {
-            $0.workspace.isSavingPreferences = true
+        await store.send(.pipeline(.savePreferencesButtonTapped)) {
+            $0.pipeline.isSavingPreferences = true
         }
-        await store.receive(\.workspace.savePreferencesFinished) {
-            $0.workspace.isSavingPreferences = false
+        await store.receive(\.pipeline.savePreferencesFinished) {
+            $0.pipeline.isSavingPreferences = false
         }
+        await store.receive(\.refreshTasksButtonTapped) {
+            $0.isLoadingTasks = true
+        }
+        await store.receive(\.taskResponse.success) {
+            $0.isLoadingTasks = false
+        }
+        await store.receive(\.pipeline.selectPipeline)
 
         let savedPreferences = await recorder.value()
-        XCTAssertEqual(savedPreferences?.defaultRepositoryPath, preferences.defaultRepositoryPath)
+        XCTAssertEqual(savedPreferences?.defaultProjectPath, preferences.defaultProjectPath)
         XCTAssertEqual(savedPreferences?.defaultAgentCommand, preferences.defaultAgentCommand)
     }
 
     func testFinishSetupPersistsPreferencesAndDismissesWizard() async {
         let recorder = PreferencesRecorder()
-        let configuration = TaskBoardConfiguration(
+        let configuration = FeishuTaskProviderConfiguration(
             appID: "cli_xxx",
             appSecret: "secret",
             appToken: "app_token",
             tableID: "tbl_tasks"
         )
+        let providerConfiguration = TaskProviderConfiguration(kind: .feishu, feishu: configuration)
         let environment = EnvironmentSetupReport(
             git: .init(name: "Git", command: "git", isInstalled: true, resolvedPath: "/usr/bin/git"),
             claude: .init(name: "Claude CLI", command: "claude", isInstalled: true, resolvedPath: "/opt/homebrew/bin/claude"),
@@ -555,31 +517,31 @@ final class AppFeatureTests: XCTestCase {
                 isSetupWizardPresented: true,
                 setupStep: .finish,
                 environmentReport: environment,
-                workspace: WorkspaceFeature.State(
-                    preferences: WorkspacePreferences(
-                        taskBoardConfiguration: configuration
+                pipeline: PipelineFeature.State(
+                    preferences: AppPreferences(
+                        taskProviderConfiguration: providerConfiguration
                     )
                 )
             )
         ) {
             AppFeature()
         } withDependencies: {
-            $0.workspacePreferencesClient.savePreferences = { await recorder.record($0) }
-            $0.taskBoardClient.fetchTasks = { _ in [] }
+            $0.appPreferencesClient.savePreferences = { await recorder.record($0) }
+            $0.taskProviderClient.fetchTasks = { _ in [] }
         }
 
         await store.send(.finishSetupButtonTapped) {
-            $0.workspace.preferences.hasCompletedOnboarding = true
+            $0.pipeline.preferences.hasCompletedOnboarding = true
             $0.isFinishingSetup = true
         }
-        await store.receive(\.workspace.savePreferencesButtonTapped) {
-            $0.workspace.isSavingPreferences = true
+        await store.receive(\.pipeline.savePreferencesButtonTapped) {
+            $0.pipeline.isSavingPreferences = true
         }
-        await store.receive(\.workspace.savePreferencesFinished) {
+        await store.receive(\.pipeline.savePreferencesFinished) {
             $0.isFinishingSetup = false
             $0.isSetupWizardPresented = false
             $0.setupStep = .finish
-            $0.workspace.isSavingPreferences = false
+            $0.pipeline.isSavingPreferences = false
         }
         await store.receive(\.refreshTasksButtonTapped) {
             $0.isLoadingTasks = true
@@ -587,20 +549,22 @@ final class AppFeatureTests: XCTestCase {
         await store.receive(\.taskResponse.success) {
             $0.isLoadingTasks = false
         }
-        await store.receive(\.workspace.selectWorkspace)
+        await store.receive(\.pipeline.selectPipeline)
 
         let savedPreferences = await recorder.value()
         XCTAssertEqual(savedPreferences?.hasCompletedOnboarding, true)
-        XCTAssertEqual(savedPreferences?.taskBoardConfiguration.appID, configuration.appID)
+        XCTAssertEqual(savedPreferences?.taskProviderConfiguration.kind, .feishu)
+        XCTAssertEqual(savedPreferences?.feishuProviderConfiguration.appID, configuration.appID)
     }
 
     func testMarkSelectedTaskDoneWritesBackStatus() async {
-        let configuration = TaskBoardConfiguration(
+        let configuration = FeishuTaskProviderConfiguration(
             appID: "cli_xxx",
             appSecret: "secret",
             appToken: "app_token",
             tableID: "tbl_tasks"
         )
+        let providerConfiguration = TaskProviderConfiguration(kind: .feishu, feishu: configuration)
         let task = LooperTask(
             id: "task-1",
             title: "Done me",
@@ -615,14 +579,14 @@ final class AppFeatureTests: XCTestCase {
             initialState: AppFeature.State(
                 tasks: [task],
                 selectedTaskID: task.id,
-                workspace: WorkspaceFeature.State(
-                    preferences: WorkspacePreferences(taskBoardConfiguration: configuration)
+                pipeline: PipelineFeature.State(
+                    preferences: AppPreferences(taskProviderConfiguration: providerConfiguration)
                 )
             )
         ) {
             AppFeature()
         } withDependencies: {
-            $0.taskBoardClient.updateTaskStatus = { taskID, status, _ in
+            $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
                 await recorder.record(taskID, status)
             }
         }
@@ -642,19 +606,18 @@ final class AppFeatureTests: XCTestCase {
     }
 
     func testTerminalEventAutoWritesDoneStatus() async {
-        let configuration = TaskBoardConfiguration(
+        let configuration = FeishuTaskProviderConfiguration(
             appID: "cli_xxx",
             appSecret: "secret",
             appToken: "app_token",
             tableID: "tbl_tasks"
         )
-        let workspace = CodingWorkspace(
+        let providerConfiguration = TaskProviderConfiguration(kind: .feishu, feishu: configuration)
+        let pipeline = Pipeline(
             id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
             name: "demo",
-            repositoryRootPath: "/tmp/demo",
-            worktreePath: "/tmp/demo",
-            branchName: "",
-            baseBranch: "",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
             agentCommand: "claude",
             tmuxSessionName: "demo"
         )
@@ -672,22 +635,22 @@ final class AppFeatureTests: XCTestCase {
             initialState: AppFeature.State(
                 tasks: [task],
                 selectedTaskID: task.id,
-                workspace: WorkspaceFeature.State(
-                    workspaces: [workspace],
-                    selectedWorkspaceID: workspace.id,
-                    preferences: WorkspacePreferences(taskBoardConfiguration: configuration)
+                pipeline: PipelineFeature.State(
+                    pipelines: [pipeline],
+                    selectedPipelineID: pipeline.id,
+                    preferences: AppPreferences(taskProviderConfiguration: providerConfiguration)
                 )
             )
         ) {
             AppFeature()
         } withDependencies: {
-            $0.taskBoardClient.updateTaskStatus = { taskID, status, _ in
+            $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
                 await recorder.record(taskID, status)
             }
         }
 
-        let event = WorkspaceTerminalEvent(
-            workspaceID: workspace.id,
+        let event = PipelineTerminalEvent(
+            pipelineID: pipeline.id,
             suggestedTaskStatus: .done,
             exitCode: 0
         )
@@ -706,15 +669,56 @@ final class AppFeatureTests: XCTestCase {
         XCTAssertEqual(events.first?.1, .done)
     }
 
-    func testWorkspaceBranchNameNormalizesInput() {
-        let namedDraft = WorkspaceDraft(
+    func testCreateLocalTaskInsertsTaskAndSelectsIt() async {
+        let task = LooperTask(
+            id: "local-task-1",
+            title: "Local Task",
+            summary: "Summary",
+            status: .pending,
+            source: "Local",
+            repoPath: URL(filePath: "/tmp/local-project")
+        )
+        let draft = LocalTaskDraft(
+            title: "Local Task",
+            summary: "Summary",
+            projectPath: "/tmp/local-project"
+        )
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                pipeline: PipelineFeature.State(
+                    preferences: AppPreferences(
+                        taskProviderConfiguration: TaskProviderConfiguration(kind: .local),
+                        hasCompletedOnboarding: true
+                    )
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.taskProviderClient.createTask = { _, _ in task }
+        }
+
+        await store.send(.createLocalTaskButtonTapped(draft)) {
+            $0.isCreatingLocalTask = true
+        }
+        await store.receive(\.localTaskCreateResponse.success) {
+            $0.isCreatingLocalTask = false
+            $0.isLocalTaskComposerPresented = false
+            $0.tasks = [task]
+            $0.selectedTaskID = task.id
+        }
+    }
+
+    func testPipelineDraftInfersNameFromInput() {
+        let namedDraft = PipelineDraft(
             name: "Payment Hardening",
-            repositoryPath: "/tmp/repo",
+            projectPath: "/tmp/repo",
             agentCommand: "claude"
         )
-        let unnamedDraft = WorkspaceDraft(
+        let unnamedDraft = PipelineDraft(
             name: "",
-            repositoryPath: "/tmp/Feature Repo",
+            projectPath: "/tmp/Feature Repo",
             agentCommand: "claude"
         )
 

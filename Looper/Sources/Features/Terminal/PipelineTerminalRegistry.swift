@@ -5,31 +5,31 @@ import Observation
 
 @MainActor
 @Observable
-final class WorkspaceTerminalRegistry {
-    static let shared = WorkspaceTerminalRegistry()
+final class PipelineTerminalRegistry {
+    static let shared = PipelineTerminalRegistry()
 
-    private(set) var sessions: [UUID: WorkspaceTerminalSession] = [:]
-    private var eventContinuations: [UUID: AsyncStream<WorkspaceTerminalEvent>.Continuation] = [:]
+    private(set) var sessions: [UUID: PipelineTerminalSession] = [:]
+    private var eventContinuations: [UUID: AsyncStream<PipelineTerminalEvent>.Continuation] = [:]
 
-    func upsertSession(for workspace: CodingWorkspace) {
-        if let session = sessions[workspace.id] {
-            session.updateWorkspace(workspace)
+    func upsertSession(for pipeline: Pipeline) {
+        if let session = sessions[pipeline.id] {
+            session.updatePipeline(pipeline)
             return
         }
 
-        sessions[workspace.id] = WorkspaceTerminalSession(workspace: workspace) { [weak self] event in
+        sessions[pipeline.id] = PipelineTerminalSession(pipeline: pipeline) { [weak self] event in
             self?.broadcast(event)
         }
     }
 
-    func rebuildSession(for workspace: CodingWorkspace) {
-        sessions[workspace.id]?.invalidate()
-        sessions[workspace.id] = WorkspaceTerminalSession(workspace: workspace) { [weak self] event in
+    func rebuildSession(for pipeline: Pipeline) {
+        sessions[pipeline.id]?.invalidate()
+        sessions[pipeline.id] = PipelineTerminalSession(pipeline: pipeline) { [weak self] event in
             self?.broadcast(event)
         }
     }
 
-    func session(id: UUID) -> WorkspaceTerminalSession? {
+    func session(id: UUID) -> PipelineTerminalSession? {
         sessions[id]
     }
 
@@ -37,7 +37,7 @@ final class WorkspaceTerminalRegistry {
         sessions.removeValue(forKey: id)?.invalidate()
     }
 
-    func events() -> AsyncStream<WorkspaceTerminalEvent> {
+    func events() -> AsyncStream<PipelineTerminalEvent> {
         AsyncStream { continuation in
             let id = UUID()
             eventContinuations[id] = continuation
@@ -49,22 +49,22 @@ final class WorkspaceTerminalRegistry {
         }
     }
 
-    private func broadcast(_ event: WorkspaceTerminalEvent) {
+    private func broadcast(_ event: PipelineTerminalEvent) {
         for continuation in eventContinuations.values {
             continuation.yield(event)
         }
     }
 }
 
-struct WorkspaceTerminalEvent: Equatable, Sendable {
-    var workspaceID: UUID
+struct PipelineTerminalEvent: Equatable, Sendable {
+    var pipelineID: UUID
     var suggestedTaskStatus: LooperTask.Status?
     var exitCode: Int32?
 }
 
 @MainActor
 @Observable
-final class WorkspaceTerminalSession: NSObject {
+final class PipelineTerminalSession: NSObject {
     enum Phase: Equatable {
         case idle
         case bootstrapping
@@ -85,7 +85,7 @@ final class WorkspaceTerminalSession: NSObject {
         }
     }
 
-    private(set) var workspace: CodingWorkspace
+    private(set) var pipeline: Pipeline
     private(set) var title: String = ""
     private(set) var surfaceSize: TerminalGridMetrics?
     private(set) var isFocused: Bool = false
@@ -97,13 +97,13 @@ final class WorkspaceTerminalSession: NSObject {
     private weak var terminalView: AppTerminalView?
     private var attachTask: Task<Void, Never>?
     private var didAttemptAttach = false
-    private let eventSink: @MainActor @Sendable (WorkspaceTerminalEvent) -> Void
+    private let eventSink: @MainActor @Sendable (PipelineTerminalEvent) -> Void
 
     init(
-        workspace: CodingWorkspace,
-        eventSink: @escaping @MainActor @Sendable (WorkspaceTerminalEvent) -> Void
+        pipeline: Pipeline,
+        eventSink: @escaping @MainActor @Sendable (PipelineTerminalEvent) -> Void
     ) {
-        self.workspace = workspace
+        self.pipeline = pipeline
         self.eventSink = eventSink
         self.controller = TerminalController { configuration in
             configuration.withFontSize(13)
@@ -115,18 +115,18 @@ final class WorkspaceTerminalSession: NSObject {
         self.configuration = TerminalSurfaceOptions(
             backend: .exec,
             fontSize: 13,
-            workingDirectory: workspace.worktreePath,
+            workingDirectory: pipeline.executionPath,
             context: .window
         )
         super.init()
     }
 
     var displayTitle: String {
-        title.isEmpty ? workspace.name : title
+        title.isEmpty ? pipeline.name : title
     }
 
-    func updateWorkspace(_ workspace: CodingWorkspace) {
-        self.workspace = workspace
+    func updatePipeline(_ pipeline: Pipeline) {
+        self.pipeline = pipeline
     }
 
     func attach(view: AppTerminalView) {
@@ -176,14 +176,14 @@ final class WorkspaceTerminalSession: NSObject {
 
         terminalView.window?.makeFirstResponder(terminalView)
         terminalView.insertText(
-            workspace.attachScript + "\n",
+            pipeline.attachScript + "\n",
             replacementRange: NSRange(location: NSNotFound, length: 0)
         )
         phase = .attached
     }
 }
 
-extension WorkspaceTerminalSession:
+extension PipelineTerminalSession:
     TerminalSurfaceTitleDelegate,
     TerminalSurfaceGridResizeDelegate,
     TerminalSurfaceFocusDelegate,
@@ -205,13 +205,13 @@ extension WorkspaceTerminalSession:
         phase = .terminated
         didAttemptAttach = false
 
-        guard workspace.tracksAgentLifecycle else { return }
+        guard pipeline.tracksAgentLifecycle else { return }
 
         let exitCode = consumeExitCode()
         let suggestedTaskStatus: LooperTask.Status = (exitCode ?? 1) == 0 ? .done : .failed
         eventSink(
-            WorkspaceTerminalEvent(
-                workspaceID: workspace.id,
+            PipelineTerminalEvent(
+                pipelineID: pipeline.id,
                 suggestedTaskStatus: suggestedTaskStatus,
                 exitCode: exitCode
             )
@@ -219,9 +219,9 @@ extension WorkspaceTerminalSession:
     }
 }
 
-private extension WorkspaceTerminalSession {
+private extension PipelineTerminalSession {
     func consumeExitCode() -> Int32? {
-        let url = workspace.exitStatusFileURL
+        let url = pipeline.exitStatusFileURL
         guard let data = try? Data(contentsOf: url) else {
             return nil
         }

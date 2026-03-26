@@ -1,6 +1,6 @@
 import Foundation
 
-struct LooperTask: Equatable, Identifiable, Sendable {
+struct LooperTask: Codable, Equatable, Identifiable, Sendable {
     let id: String
     var title: String
     var summary: String
@@ -8,7 +8,7 @@ struct LooperTask: Equatable, Identifiable, Sendable {
     var source: String
     var repoPath: URL?
 
-    enum Status: String, Equatable, Sendable {
+    enum Status: String, Codable, Equatable, Sendable {
         case pending
         case developing
         case done

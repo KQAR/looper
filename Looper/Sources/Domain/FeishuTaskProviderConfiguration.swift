@@ -1,6 +1,6 @@
 import Foundation
 
-struct TaskBoardConfiguration: Equatable, Codable, Sendable {
+struct FeishuTaskProviderConfiguration: Equatable, Codable, Sendable {
     var appID: String = ""
     var appSecret: String = ""
     var appToken: String = ""
@@ -38,18 +38,18 @@ struct TaskBoardConfiguration: Equatable, Codable, Sendable {
     }
 
     func status(for rawValue: String) -> LooperTask.Status? {
-        let normalized = rawValue.normalizedTaskBoardValue
+        let normalized = rawValue.normalizedFeishuValue
 
-        if normalized == pendingStatusValue.normalizedTaskBoardValue {
+        if normalized == pendingStatusValue.normalizedFeishuValue {
             return .pending
         }
-        if normalized == developingStatusValue.normalizedTaskBoardValue {
+        if normalized == developingStatusValue.normalizedFeishuValue {
             return .developing
         }
-        if normalized == doneStatusValue.normalizedTaskBoardValue {
+        if normalized == doneStatusValue.normalizedFeishuValue {
             return .done
         }
-        if normalized == failedStatusValue.normalizedTaskBoardValue {
+        if normalized == failedStatusValue.normalizedFeishuValue {
             return .failed
         }
 
@@ -62,7 +62,7 @@ private extension String {
         trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var normalizedTaskBoardValue: String {
+    var normalizedFeishuValue: String {
         trimmed.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 }

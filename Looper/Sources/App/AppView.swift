@@ -4,7 +4,7 @@ import SwiftUI
 @MainActor
 struct AppView: View {
     @Bindable var store: StoreOf<AppFeature>
-    let terminalRegistry: WorkspaceTerminalRegistry
+    let terminalRegistry: PipelineTerminalRegistry
 
     var body: some View {
         HSplitView {
@@ -38,18 +38,35 @@ struct AppView: View {
                 .frame(width: 760, height: 760)
                 .padding(28)
         }
-        .alert(
-            "Task Board Error",
+        .sheet(
             isPresented: Binding(
-                get: { store.taskBoardErrorMessage != nil },
-                set: { if !$0 { store.send(.dismissTaskBoardError) } }
+                get: { store.isLocalTaskComposerPresented },
+                set: { if !$0 { store.send(.dismissLocalTaskComposerButtonTapped) } }
+            )
+        ) {
+            LocalTaskComposerView(
+                defaultProjectPath: store.pipeline.preferences.defaultProjectPath,
+                isCreating: store.isCreatingLocalTask,
+                onCancel: { store.send(.dismissLocalTaskComposerButtonTapped) },
+                onCreate: { draft in
+                    store.send(.createLocalTaskButtonTapped(draft))
+                }
+            )
+            .frame(width: 520)
+            .padding(24)
+        }
+        .alert(
+            "Task Provider Error",
+            isPresented: Binding(
+                get: { store.taskProviderErrorMessage != nil },
+                set: { if !$0 { store.send(.dismissTaskProviderError) } }
             )
         ) {
             Button("OK", role: .cancel) {
-                store.send(.dismissTaskBoardError)
+                store.send(.dismissTaskProviderError)
             }
         } message: {
-            Text(store.taskBoardErrorMessage ?? "")
+            Text(store.taskProviderErrorMessage ?? "")
         }
         .onAppear {
             store.send(.onAppear)
@@ -76,6 +93,16 @@ struct AppView: View {
                 }
                 .buttonStyle(.bordered)
 
+                if store.pipeline.preferences.taskProviderConfiguration.kind == .local {
+                    Button {
+                        store.send(.openLocalTaskComposerButtonTapped)
+                    } label: {
+                        Label("New Task", systemImage: "plus")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!store.pipeline.preferences.hasCompletedOnboarding)
+                }
+
                 Button {
                     store.send(.refreshTasksButtonTapped)
                 } label: {
@@ -87,7 +114,7 @@ struct AppView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(store.isLoadingTasks || !store.workspace.preferences.hasCompletedOnboarding)
+                .disabled(store.isLoadingTasks || !store.pipeline.preferences.hasCompletedOnboarding)
             }
 
             List(
@@ -107,8 +134,12 @@ struct AppView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            if !store.workspace.preferences.hasCompletedOnboarding {
-                Text("Finish setup to connect Feishu, verify your environment, and start the first task.")
+            if !store.pipeline.preferences.hasCompletedOnboarding {
+                Text(setupIncompleteMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if store.tasks.isEmpty {
+                Text(emptyInboxMessage)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -119,15 +150,15 @@ struct AppView: View {
 
     private var executionStage: some View {
         Group {
-            if let workspace = selectedWorkspace,
-               let session = terminalRegistry.session(id: workspace.id)
+            if let pipeline = selectedPipeline,
+               let session = terminalRegistry.session(id: pipeline.id)
             {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(selectedTask?.title ?? workspace.name)
+                            Text(selectedTask?.title ?? pipeline.name)
                                 .font(.title3.weight(.semibold))
-                            Text(workspace.worktreePath)
+                            Text(pipeline.executionPath)
                                 .font(.footnote.monospaced())
                                 .foregroundStyle(.secondary)
                         }
@@ -137,14 +168,14 @@ struct AppView: View {
                         AppStatusBadge(title: session.phase.label)
 
                         Button {
-                            store.send(.workspace(.attachSelectedWorkspaceButtonTapped))
+                            store.send(.pipeline(.attachSelectedPipelineButtonTapped))
                         } label: {
                             Label("Attach", systemImage: "terminal")
                         }
                         .buttonStyle(.bordered)
                     }
 
-                    WorkspaceTerminalRepresentable(session: session)
+                    PipelineTerminalRepresentable(session: session)
                         .clipShape(.rect(cornerRadius: 22))
                         .overlay {
                             RoundedRectangle(cornerRadius: 22)
@@ -160,9 +191,13 @@ struct AppView: View {
                 } description: {
                     Text(executionEmptyStateMessage)
                 } actions: {
-                    if !store.workspace.preferences.hasCompletedOnboarding {
+                    if !store.pipeline.preferences.hasCompletedOnboarding {
                         Button("Open Setup") {
                             store.send(.openSetupButtonTapped)
+                        }
+                    } else if store.pipeline.preferences.taskProviderConfiguration.kind == .local && store.tasks.isEmpty {
+                        Button("Create Local Task") {
+                            store.send(.openLocalTaskComposerButtonTapped)
                         }
                     } else {
                         Button("Start Task") {
@@ -219,14 +254,14 @@ struct AppView: View {
             Text("Execution")
                 .font(.headline)
 
-            if let workspace = selectedWorkspace {
-                AppInspectorRow(label: "Workspace", value: workspace.name)
-                AppInspectorRow(label: "Directory", value: workspace.worktreePath)
-                AppInspectorRow(label: "Command", value: workspace.agentCommand.ifEmpty(fallback: "Shell only"))
-                AppInspectorRow(label: "tmux", value: workspace.tmuxSessionName)
+            if let pipeline = selectedPipeline {
+                AppInspectorRow(label: "Pipeline", value: pipeline.name)
+                AppInspectorRow(label: "Directory", value: pipeline.executionPath)
+                AppInspectorRow(label: "Command", value: pipeline.agentCommand.ifEmpty(fallback: "Shell only"))
+                AppInspectorRow(label: "tmux", value: pipeline.tmuxSessionName)
                 AppInspectorRow(label: "Terminal", value: selectedSession?.phase.label ?? "Not Ready")
             } else {
-                Text("This task has no active execution workspace yet.")
+                Text("This task has no active execution pipeline yet.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -243,25 +278,25 @@ struct AppView: View {
             Button {
                 store.send(.startSelectedTaskButtonTapped)
             } label: {
-                Label(selectedWorkspace == nil ? "Start Task" : "Resume Task", systemImage: "play.fill")
+                Label(selectedPipeline == nil ? "Start Task" : "Resume Task", systemImage: "play.fill")
             }
             .buttonStyle(.borderedProminent)
             .disabled(
                 selectedTask?.repoPath == nil
                     || isSelectedTaskUpdating
-                    || !store.workspace.preferences.hasCompletedOnboarding
+                    || !store.pipeline.preferences.hasCompletedOnboarding
             )
 
-            if let workspace = selectedWorkspace {
+            if let pipeline = selectedPipeline {
                 Button {
-                    store.send(.workspace(.openInFinderButtonTapped(workspace.id)))
+                    store.send(.pipeline(.revealPipelineInFinderButtonTapped(pipeline.id)))
                 } label: {
                     Label("Reveal Project", systemImage: "folder")
                 }
                 .buttonStyle(.bordered)
 
                 Button {
-                    store.send(.workspace(.rebuildWorkspaceButtonTapped(workspace.id)))
+                    store.send(.pipeline(.rebuildPipelineButtonTapped(pipeline.id)))
                 } label: {
                     Label("Restart Execution", systemImage: "arrow.clockwise")
                 }
@@ -276,7 +311,7 @@ struct AppView: View {
                 Label("Mark Done", systemImage: "checkmark.circle.fill")
             }
             .buttonStyle(.bordered)
-            .disabled(selectedTask == nil || isSelectedTaskUpdating || !store.workspace.preferences.hasCompletedOnboarding)
+            .disabled(selectedTask == nil || isSelectedTaskUpdating || !store.pipeline.preferences.hasCompletedOnboarding)
 
             Button {
                 store.send(.markSelectedTaskFailedButtonTapped)
@@ -284,7 +319,7 @@ struct AppView: View {
                 Label("Mark Failed", systemImage: "xmark.circle.fill")
             }
             .buttonStyle(.bordered)
-            .disabled(selectedTask == nil || isSelectedTaskUpdating || !store.workspace.preferences.hasCompletedOnboarding)
+            .disabled(selectedTask == nil || isSelectedTaskUpdating || !store.pipeline.preferences.hasCompletedOnboarding)
 
             if isSelectedTaskUpdating {
                 ProgressView("Syncing task status…")
@@ -302,16 +337,16 @@ struct AppView: View {
                 Text("Setup")
                     .font(.headline)
                 Spacer()
-                AppStatusBadge(title: store.workspace.preferences.hasCompletedOnboarding ? "Ready" : "Required")
+                AppStatusBadge(title: store.pipeline.preferences.hasCompletedOnboarding ? "Ready" : "Required")
             }
 
             AppInspectorRow(
-                label: "Task Board",
-                value: store.workspace.preferences.taskBoardConfiguration.isConfigured ? "Feishu connected" : "Not configured"
+                label: "Task Source",
+                value: taskProviderSummary
             )
             AppInspectorRow(
                 label: "Default Agent",
-                value: store.workspace.preferences.defaultAgentCommand.ifEmpty(fallback: "claude")
+                value: store.pipeline.preferences.defaultAgentCommand.ifEmpty(fallback: "claude")
             )
             AppInspectorRow(
                 label: "Environment",
@@ -322,7 +357,7 @@ struct AppView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            Button(store.workspace.preferences.hasCompletedOnboarding ? "Edit Setup" : "Continue Setup") {
+            Button(store.pipeline.preferences.hasCompletedOnboarding ? "Edit Setup" : "Continue Setup") {
                 store.send(.openSetupButtonTapped)
             }
             .buttonStyle(.bordered)
@@ -332,17 +367,19 @@ struct AppView: View {
     }
 
     private var executionEmptyStateMessage: String {
-        if !store.workspace.preferences.hasCompletedOnboarding {
-            "Finish setup first. Looper needs a Feishu task board and a local Claude environment before it can launch work."
+        if !store.pipeline.preferences.hasCompletedOnboarding {
+            "Finish setup first. Looper needs a task source and a local Claude environment before it can launch work."
+        } else if store.pipeline.preferences.taskProviderConfiguration.kind == .local && store.tasks.isEmpty {
+            "Create a local task first, then start it to attach a project-backed terminal."
         } else {
             "Select a task and start it to attach a project-backed terminal."
         }
     }
 
     private var setupHint: String {
-        store.workspace.preferences.hasCompletedOnboarding
-            ? "Re-open setup any time to test Feishu again, update mappings, or verify your local tools."
-            : "A first-run setup will connect Feishu, verify Claude and Git, and bring you back ready to start the first task."
+        store.pipeline.preferences.hasCompletedOnboarding
+            ? "Re-open setup any time to switch providers, test Feishu again, or verify your local tools."
+            : "A first-run setup will choose a task source, verify Claude and Git, and bring you back ready to start the first task."
     }
 
     private var environmentSummary: String {
@@ -355,19 +392,46 @@ struct AppView: View {
         return store.tasks[id: selectedTaskID]
     }
 
-    private var selectedWorkspace: CodingWorkspace? {
-        guard let selectedWorkspaceID = store.workspace.selectedWorkspaceID else { return nil }
-        return store.workspace.workspaces[id: selectedWorkspaceID]
+    private var selectedPipeline: Pipeline? {
+        guard let selectedPipelineID = store.pipeline.selectedPipelineID else { return nil }
+        return store.pipeline.pipelines[id: selectedPipelineID]
     }
 
-    private var selectedSession: WorkspaceTerminalSession? {
-        guard let selectedWorkspace else { return nil }
-        return terminalRegistry.session(id: selectedWorkspace.id)
+    private var selectedSession: PipelineTerminalSession? {
+        guard let selectedPipeline else { return nil }
+        return terminalRegistry.session(id: selectedPipeline.id)
     }
 
     private var isSelectedTaskUpdating: Bool {
         guard let selectedTask else { return false }
         return store.updatingTaskIDs.contains(selectedTask.id)
+    }
+
+    private var taskProviderSummary: String {
+        switch store.pipeline.preferences.taskProviderConfiguration.kind {
+        case .local:
+            return "Local Tasks"
+        case .feishu:
+            return store.pipeline.preferences.feishuProviderConfiguration.isConfigured ? "Feishu connected" : "Feishu not configured"
+        }
+    }
+
+    private var setupIncompleteMessage: String {
+        switch store.pipeline.preferences.taskProviderConfiguration.kind {
+        case .local:
+            "Finish setup to enable Local Tasks, verify your environment, and create the first task."
+        case .feishu:
+            "Finish setup to connect Feishu, verify your environment, and start the first task."
+        }
+    }
+
+    private var emptyInboxMessage: String {
+        switch store.pipeline.preferences.taskProviderConfiguration.kind {
+        case .local:
+            "No local tasks yet. Create one to start the first execution."
+        case .feishu:
+            "No synced tasks yet. Refresh the inbox or check the current Feishu mapping."
+        }
     }
 }
 

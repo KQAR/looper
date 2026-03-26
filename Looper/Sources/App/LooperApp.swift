@@ -5,7 +5,7 @@ import SwiftUI
 @main
 struct LooperApp: App {
     @State private var store: StoreOf<AppFeature>
-    @State private var terminalRegistry = WorkspaceTerminalRegistry.shared
+    @State private var terminalRegistry = PipelineTerminalRegistry.shared
 
     init() {
         let database = AppDatabase.makeLive()
@@ -13,7 +13,7 @@ struct LooperApp: App {
             initialValue: Store(initialState: AppFeature.State()) {
                 AppFeature()
             } withDependencies: {
-                $0.workspaceStoreClient = .live(database: database)
+                $0.pipelineStoreClient = .live(database: database)
             }
         )
     }

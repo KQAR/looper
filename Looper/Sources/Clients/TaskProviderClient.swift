@@ -2,40 +2,77 @@ import ComposableArchitecture
 import Foundation
 
 @DependencyClient
-struct TaskBoardClient {
-    var fetchTasks: @Sendable (TaskBoardConfiguration) async throws -> [LooperTask] = { _ in [] }
-    var inspectConfiguration: @Sendable (TaskBoardConfiguration) async throws -> TaskBoardInspection = { _ in
+struct TaskProviderClient {
+    var fetchTasks: @Sendable (TaskProviderConfiguration) async throws -> [LooperTask] = { _ in [] }
+    var inspectConfiguration: @Sendable (TaskProviderConfiguration) async throws -> TaskProviderInspection = { _ in
         .init(previewTaskCount: 0, discoveredFieldNames: [], detectedStatusValues: [], sampleTaskTitles: [])
     }
-    var updateTaskStatus: @Sendable (LooperTask.ID, LooperTask.Status, TaskBoardConfiguration) async throws -> Void = { _, _, _ in }
+    var updateTaskStatus: @Sendable (LooperTask.ID, LooperTask.Status, TaskProviderConfiguration) async throws -> Void = { _, _, _ in }
+    var createTask: @Sendable (LocalTaskDraft, TaskProviderConfiguration) async throws -> LooperTask = { _, _ in
+        throw TaskProviderFailure(description: "The selected task provider does not support task creation.")
+    }
 }
 
 extension DependencyValues {
-    var taskBoardClient: TaskBoardClient {
-        get { self[TaskBoardClient.self] }
-        set { self[TaskBoardClient.self] = newValue }
+    var taskProviderClient: TaskProviderClient {
+        get { self[TaskProviderClient.self] }
+        set { self[TaskProviderClient.self] = newValue }
     }
 }
 
-extension TaskBoardClient: DependencyKey {
+extension TaskProviderClient: DependencyKey {
+    static let testValue = TaskProviderClient(
+        fetchTasks: { _ in [] },
+        inspectConfiguration: { _ in
+            .init(previewTaskCount: 0, discoveredFieldNames: [], detectedStatusValues: [], sampleTaskTitles: [])
+        },
+        updateTaskStatus: { _, _, _ in },
+        createTask: { _, _ in
+            throw TaskProviderFailure(description: "No test task creation stub was provided.")
+        }
+    )
+
     static let liveValue = Self(
         fetchTasks: { configuration in
-            try await FeishuTaskBoardAPI.fetchTasks(configuration: configuration)
+            switch configuration.kind {
+            case .local:
+                return LocalTaskProvider.fetchTasks()
+            case .feishu:
+                return try await FeishuTaskProvider.fetchTasks(configuration: configuration.feishu)
+            }
         },
         inspectConfiguration: { configuration in
-            try await FeishuTaskBoardAPI.inspectConfiguration(configuration: configuration)
+            switch configuration.kind {
+            case .local:
+                return LocalTaskProvider.inspectConfiguration()
+            case .feishu:
+                return try await FeishuTaskProvider.inspectConfiguration(configuration: configuration.feishu)
+            }
         },
         updateTaskStatus: { taskID, status, configuration in
-            try await FeishuTaskBoardAPI.updateTaskStatus(
-                recordID: taskID,
-                status: status,
-                configuration: configuration
-            )
+            switch configuration.kind {
+            case .local:
+                try LocalTaskProvider.updateTaskStatus(taskID: taskID, status: status)
+            case .feishu:
+                try await FeishuTaskProvider.updateTaskStatus(
+                    recordID: taskID,
+                    status: status,
+                    configuration: configuration.feishu
+                )
+            }
+        },
+        createTask: { draft, configuration in
+            switch configuration.kind {
+            case .local:
+                return try LocalTaskProvider.createTask(draft: draft)
+            case .feishu:
+                throw TaskProviderFailure(description: "Create tasks from Feishu directly instead of Looper.")
+            }
         }
     )
 }
 
-struct TaskBoardFailure: LocalizedError, Equatable, Sendable {
+struct TaskProviderFailure: LocalizedError, Equatable, Sendable {
     let description: String
 
     var errorDescription: String? {
@@ -43,12 +80,66 @@ struct TaskBoardFailure: LocalizedError, Equatable, Sendable {
     }
 }
 
-private enum FeishuTaskBoardAPI {
+private enum LocalTaskProvider {
+    private static let storageKey = "taskProvider.localTasks"
+
+    static func fetchTasks() -> [LooperTask] {
+        storedTasks()
+    }
+
+    static func inspectConfiguration() -> TaskProviderInspection {
+        let tasks = storedTasks()
+        return TaskProviderInspection(
+            previewTaskCount: tasks.count,
+            discoveredFieldNames: ["title", "summary", "projectPath", "status"],
+            detectedStatusValues: Array(Set(tasks.map(\.status.rawValue))).sorted(),
+            sampleTaskTitles: Array(tasks.map(\.title).prefix(3))
+        )
+    }
+
+    static func updateTaskStatus(
+        taskID: LooperTask.ID,
+        status: LooperTask.Status
+    ) throws {
+        var tasks = storedTasks()
+        guard let index = tasks.firstIndex(where: { $0.id == taskID }) else {
+            throw TaskProviderFailure(description: "Local task not found.")
+        }
+
+        tasks[index].status = status
+        save(tasks)
+    }
+
+    static func createTask(draft: LocalTaskDraft) throws -> LooperTask {
+        guard draft.canCreate else {
+            throw TaskProviderFailure(description: "Title and project path are required.")
+        }
+
+        var tasks = storedTasks()
+        let task = draft.makeTask()
+        tasks.insert(task, at: 0)
+        save(tasks)
+        return task
+    }
+
+    private static func storedTasks() -> [LooperTask] {
+        let defaults = UserDefaults.standard
+        guard let data = defaults.data(forKey: storageKey) else { return [] }
+        return (try? JSONDecoder().decode([LooperTask].self, from: data)) ?? []
+    }
+
+    private static func save(_ tasks: [LooperTask]) {
+        let defaults = UserDefaults.standard
+        defaults.set(try? JSONEncoder().encode(tasks), forKey: storageKey)
+    }
+}
+
+private enum FeishuTaskProvider {
     private static let baseURL = URL(string: "https://open.feishu.cn")!
 
-    static func fetchTasks(configuration: TaskBoardConfiguration) async throws -> [LooperTask] {
+    static func fetchTasks(configuration: FeishuTaskProviderConfiguration) async throws -> [LooperTask] {
         guard configuration.isConfigured else {
-            throw TaskBoardFailure(description: "Configure Feishu task board settings first.")
+            throw TaskProviderFailure(description: "Configure Feishu task provider settings first.")
         }
 
         let accessToken = try await tenantAccessToken(configuration: configuration)
@@ -68,9 +159,9 @@ private enum FeishuTaskBoardAPI {
         return records.map { task(from: $0, configuration: configuration) }
     }
 
-    static func inspectConfiguration(configuration: TaskBoardConfiguration) async throws -> TaskBoardInspection {
+    static func inspectConfiguration(configuration: FeishuTaskProviderConfiguration) async throws -> TaskProviderInspection {
         guard configuration.minimumConnectionFieldsArePresent else {
-            throw TaskBoardFailure(description: "App ID, app secret, app token, and table ID are required.")
+            throw TaskProviderFailure(description: "App ID, app secret, app token, and table ID are required.")
         }
 
         let accessToken = try await tenantAccessToken(configuration: configuration)
@@ -80,21 +171,17 @@ private enum FeishuTaskBoardAPI {
             pageToken: nil
         )
 
-        let fieldNames = Array(
-            Set(page.items.flatMap { Array($0.fields.keys) })
-        ).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        let fieldNames = Array(Set(page.items.flatMap { Array($0.fields.keys) }))
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         let statusValues = Array(
-            Set(
-                page.items.compactMap {
-                    $0.fields[configuration.statusFieldName]?.textValue?.trimmed
-                }
-            )
-        ).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            Set(page.items.compactMap { $0.fields[configuration.statusFieldName]?.textValue?.trimmed })
+        )
+        .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         let sampleTitles = page.items.prefix(3).compactMap {
             $0.fields[configuration.titleFieldName]?.textValue?.trimmed
         }
 
-        return TaskBoardInspection(
+        return TaskProviderInspection(
             previewTaskCount: page.items.count,
             discoveredFieldNames: fieldNames,
             detectedStatusValues: statusValues,
@@ -105,10 +192,10 @@ private enum FeishuTaskBoardAPI {
     static func updateTaskStatus(
         recordID: String,
         status: LooperTask.Status,
-        configuration: TaskBoardConfiguration
+        configuration: FeishuTaskProviderConfiguration
     ) async throws {
         guard configuration.isConfigured else {
-            throw TaskBoardFailure(description: "Configure Feishu task board settings first.")
+            throw TaskProviderFailure(description: "Configure Feishu task provider settings first.")
         }
 
         let accessToken = try await tenantAccessToken(configuration: configuration)
@@ -127,7 +214,7 @@ private enum FeishuTaskBoardAPI {
         _ = try await perform(request, decoding: EmptyPayload.self)
     }
 
-    private static func tenantAccessToken(configuration: TaskBoardConfiguration) async throws -> String {
+    private static func tenantAccessToken(configuration: FeishuTaskProviderConfiguration) async throws -> String {
         var request = URLRequest(
             url: baseURL.appending(path: "/open-apis/auth/v3/tenant_access_token/internal")
         )
@@ -145,7 +232,7 @@ private enum FeishuTaskBoardAPI {
     }
 
     private static func fetchRecordPage(
-        configuration: TaskBoardConfiguration,
+        configuration: FeishuTaskProviderConfiguration,
         accessToken: String,
         pageToken: String?
     ) async throws -> RecordPagePayload {
@@ -153,16 +240,14 @@ private enum FeishuTaskBoardAPI {
             url: recordsURL(configuration: configuration),
             resolvingAgainstBaseURL: false
         )
-        components?.queryItems = [
-            URLQueryItem(name: "page_size", value: "200")
-        ]
+        components?.queryItems = [URLQueryItem(name: "page_size", value: "200")]
 
         if let pageToken, !pageToken.isEmpty {
             components?.queryItems?.append(URLQueryItem(name: "page_token", value: pageToken))
         }
 
         guard let url = components?.url else {
-            throw TaskBoardFailure(description: "Unable to build Feishu records URL.")
+            throw TaskProviderFailure(description: "Unable to build Feishu records URL.")
         }
 
         var request = URLRequest(url: url)
@@ -174,7 +259,7 @@ private enum FeishuTaskBoardAPI {
 
     private static func task(
         from record: FeishuRecord,
-        configuration: TaskBoardConfiguration
+        configuration: FeishuTaskProviderConfiguration
     ) -> LooperTask {
         let title = record.fields[configuration.titleFieldName]?.textValue?.trimmed
         let summary = record.fields[configuration.summaryFieldName]?.textValue?.trimmed ?? ""
@@ -205,12 +290,12 @@ private enum FeishuTaskBoardAPI {
         let (data, response) = try await URLSession.shared.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw TaskBoardFailure(description: "Feishu returned a non-HTTP response.")
+            throw TaskProviderFailure(description: "Feishu returned a non-HTTP response.")
         }
 
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
             let message = String(decoding: data, as: UTF8.self).trimmed
-            throw TaskBoardFailure(
+            throw TaskProviderFailure(
                 description: message.ifEmpty(
                     fallback: "Feishu request failed with status code \(httpResponse.statusCode)."
                 )
@@ -219,25 +304,25 @@ private enum FeishuTaskBoardAPI {
 
         let envelope = try JSONDecoder().decode(FeishuEnvelope<Response>.self, from: data)
         guard envelope.code == 0 else {
-            throw TaskBoardFailure(
+            throw TaskProviderFailure(
                 description: envelope.msg.ifEmpty(fallback: "Feishu request failed.")
             )
         }
         guard let payload = envelope.data else {
-            throw TaskBoardFailure(description: "Feishu returned an empty payload.")
+            throw TaskProviderFailure(description: "Feishu returned an empty payload.")
         }
 
         return payload
     }
 
-    private static func recordsURL(configuration: TaskBoardConfiguration) -> URL {
+    private static func recordsURL(configuration: FeishuTaskProviderConfiguration) -> URL {
         baseURL.appending(
             path: "/open-apis/bitable/v1/apps/\(configuration.appToken.pathEscaped)/tables/\(configuration.tableID.pathEscaped)/records"
         )
     }
 
     private static func recordURL(
-        configuration: TaskBoardConfiguration,
+        configuration: FeishuTaskProviderConfiguration,
         recordID: String
     ) -> URL {
         baseURL.appending(

@@ -9,25 +9,25 @@ actor AppDatabase {
         try Self.migrator.migrate(databaseQueue)
     }
 
-    func fetchWorkspaces() throws -> [CodingWorkspace] {
+    func fetchPipelines() throws -> [Pipeline] {
         try databaseQueue.read { db in
-            try WorkspaceRecord
+            try PipelineRecord
                 .order(Column("createdAt").desc)
                 .fetchAll(db)
-                .map(\.workspace)
+                .map(\.pipeline)
         }
     }
 
-    func saveWorkspace(_ workspace: CodingWorkspace) throws {
+    func savePipeline(_ pipeline: Pipeline) throws {
         try databaseQueue.write { db in
-            var record = WorkspaceRecord(workspace: workspace)
+            var record = PipelineRecord(pipeline: pipeline)
             try record.save(db)
         }
     }
 
-    func deleteWorkspace(id: UUID) throws {
+    func deletePipeline(id: UUID) throws {
         try databaseQueue.write { db in
-            _ = try WorkspaceRecord.deleteOne(db, key: id.uuidString)
+            _ = try PipelineRecord.deleteOne(db, key: id.uuidString)
         }
     }
 
@@ -64,14 +64,12 @@ actor AppDatabase {
     private static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
-        migrator.registerMigration("createWorkspaces") { db in
-            try db.create(table: WorkspaceRecord.databaseTableName) { table in
+        migrator.registerMigration("createPipelines") { db in
+            try db.create(table: PipelineRecord.databaseTableName) { table in
                 table.column("id", .text).primaryKey()
                 table.column("name", .text).notNull()
-                table.column("repositoryRootPath", .text).notNull()
-                table.column("worktreePath", .text).notNull()
-                table.column("branchName", .text).notNull()
-                table.column("baseBranch", .text).notNull()
+                table.column("projectPath", .text).notNull()
+                table.column("executionPath", .text).notNull()
                 table.column("agentCommand", .text).notNull()
                 table.column("tmuxSessionName", .text).notNull()
                 table.column("createdAt", .datetime).notNull()

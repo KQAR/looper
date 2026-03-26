@@ -1,12 +1,10 @@
 import Foundation
 
-struct CodingWorkspace: Equatable, Identifiable, Sendable {
+struct Pipeline: Equatable, Identifiable, Sendable {
     let id: UUID
     var name: String
-    var repositoryRootPath: String
-    var worktreePath: String
-    var branchName: String
-    var baseBranch: String
+    var projectPath: String
+    var executionPath: String
     var agentCommand: String
     var tmuxSessionName: String
     var createdAt: Date
@@ -14,54 +12,44 @@ struct CodingWorkspace: Equatable, Identifiable, Sendable {
     init(
         id: UUID = UUID(),
         name: String,
-        repositoryRootPath: String,
-        worktreePath: String,
-        branchName: String,
-        baseBranch: String,
+        projectPath: String,
+        executionPath: String,
         agentCommand: String,
         tmuxSessionName: String,
         createdAt: Date = .now
     ) {
         self.id = id
         self.name = name
-        self.repositoryRootPath = repositoryRootPath
-        self.worktreePath = worktreePath
-        self.branchName = branchName
-        self.baseBranch = baseBranch
+        self.projectPath = projectPath
+        self.executionPath = executionPath
         self.agentCommand = agentCommand
         self.tmuxSessionName = tmuxSessionName
         self.createdAt = createdAt
     }
 
-    var repositoryRootURL: URL {
-        URL(fileURLWithPath: repositoryRootPath)
+    var executionURL: URL {
+        URL(fileURLWithPath: executionPath)
     }
 
-    var worktreeURL: URL {
-        URL(fileURLWithPath: worktreePath)
-    }
-
-    var worktreeDirectoryName: String {
-        worktreeURL.lastPathComponent
+    var executionDirectoryName: String {
+        executionURL.lastPathComponent
     }
 
     var exitStatusFileURL: URL {
         URL(fileURLWithPath: NSTemporaryDirectory())
-            .appending(path: "looper-workspace-\(id.uuidString)-exit-status")
+            .appending(path: "looper-pipeline-\(id.uuidString)-exit-status")
     }
 
     var tracksAgentLifecycle: Bool {
         !agentCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var launchesProjectDirectoryDirectly: Bool {
-        repositoryRootPath == worktreePath
-            && branchName.isEmpty
-            && baseBranch.isEmpty
+    var usesProjectDirectoryAsExecutionRoot: Bool {
+        projectPath == executionPath
     }
 
     var attachScript: String {
-        let escapedWorktree = worktreePath.shellQuoted
+        let escapedExecutionPath = executionPath.shellQuoted
         let escapedSession = tmuxSessionName.shellQuoted
         let command = agentCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         let escapedStatusFile = exitStatusFileURL.path.shellQuoted
@@ -69,16 +57,16 @@ struct CodingWorkspace: Equatable, Identifiable, Sendable {
         if command.isEmpty {
             return """
             if command -v tmux >/dev/null 2>&1; then
-              tmux new-session -A -s \(escapedSession) -c \(escapedWorktree)
+              tmux new-session -A -s \(escapedSession) -c \(escapedExecutionPath)
             else
-              cd \(escapedWorktree)
+              cd \(escapedExecutionPath)
             fi
             """
         }
 
         let wrappedLaunchScript = """
         rm -f \(escapedStatusFile)
-        cd \(escapedWorktree) && \(command)
+        cd \(escapedExecutionPath) && \(command)
         status=$?
         printf '%s' "$status" > \(escapedStatusFile)
         exit "$status"
@@ -87,7 +75,7 @@ struct CodingWorkspace: Equatable, Identifiable, Sendable {
 
         return """
         if command -v tmux >/dev/null 2>&1; then
-          tmux has-session -t \(escapedSession) 2>/dev/null || tmux new-session -d -s \(escapedSession) -c \(escapedWorktree) /bin/zsh -lc \(escapedWrappedLaunchScript)
+          tmux has-session -t \(escapedSession) 2>/dev/null || tmux new-session -d -s \(escapedSession) -c \(escapedExecutionPath) /bin/zsh -lc \(escapedWrappedLaunchScript)
           tmux attach-session -t \(escapedSession)
         else
           /bin/zsh -lc \(escapedWrappedLaunchScript)
@@ -96,17 +84,17 @@ struct CodingWorkspace: Equatable, Identifiable, Sendable {
     }
 }
 
-struct WorkspaceDraft: Equatable, Sendable {
+struct PipelineDraft: Equatable, Sendable {
     var name: String = ""
-    var repositoryPath: String = ""
+    var projectPath: String = ""
     var agentCommand: String = "claude"
 
     var trimmedName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var trimmedRepositoryPath: String {
-        repositoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    var trimmedProjectPath: String {
+        projectPath.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var trimmedAgentCommand: String {
@@ -116,31 +104,31 @@ struct WorkspaceDraft: Equatable, Sendable {
     var inferredName: String {
         let explicitName = trimmedName
         guard !explicitName.isEmpty else {
-            let lastPathComponent = URL(fileURLWithPath: trimmedRepositoryPath).lastPathComponent
-            return lastPathComponent.isEmpty ? "Workspace" : lastPathComponent
+            let lastPathComponent = URL(fileURLWithPath: trimmedProjectPath).lastPathComponent
+            return lastPathComponent.isEmpty ? "Pipeline" : lastPathComponent
         }
         return explicitName
     }
 
     var canCreate: Bool {
-        !trimmedRepositoryPath.isEmpty
+        !trimmedProjectPath.isEmpty
     }
 }
 
-struct CreateWorkspaceRequest: Equatable, Sendable {
+struct CreatePipelineRequest: Equatable, Sendable {
     var name: String
-    var repositoryPath: String
+    var projectPath: String
     var agentCommand: String
 
-    init(draft: WorkspaceDraft) {
+    init(draft: PipelineDraft) {
         self.name = draft.inferredName
-        self.repositoryPath = draft.trimmedRepositoryPath
+        self.projectPath = draft.trimmedProjectPath
         self.agentCommand = draft.trimmedAgentCommand
     }
 }
 
-enum WorkspaceNaming {
-    static func slug(_ rawValue: String, fallback: String = "workspace") -> String {
+enum PipelineNaming {
+    static func slug(_ rawValue: String, fallback: String = "pipeline") -> String {
         let folded = rawValue.folding(
             options: [.diacriticInsensitive, .caseInsensitive],
             locale: .current
@@ -162,11 +150,11 @@ enum WorkspaceNaming {
     }
 
     static func tmuxSessionName(
-        repositoryRootPath: String,
-        workspaceName: String
+        projectPath: String,
+        pipelineName: String
     ) -> String {
-        let repoName = URL(fileURLWithPath: repositoryRootPath).lastPathComponent
-        return slug("\(repoName)-\(workspaceName)", fallback: "looper-session")
+        let repoName = URL(fileURLWithPath: projectPath).lastPathComponent
+        return slug("\(repoName)-\(pipelineName)", fallback: "looper-session")
     }
 }
 

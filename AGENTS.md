@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Looper is a personal macOS 26+ app for AI-driven development workflow orchestration. Fetches tasks from Feishu, auto-creates git worktrees, launches Claude Code in embedded terminals. Liquid Glass UI style.
+Looper is a personal macOS 26+ app for task-driven local AI development orchestration. It keeps long-lived project pipelines warm, accepts tasks from pluggable providers, and runs Claude Code in embedded terminals. Liquid Glass UI style.
 
 **Stack**: SwiftUI + TCA, Tuist, Swift 6, SPM, libghostty-spm, macOS 26+
 
@@ -17,8 +17,8 @@ Looper is a personal macOS 26+ app for AI-driven development workflow orchestrat
 tuist install                 # Install/update SPM dependencies
 tuist generate                # Generate Xcode project
 tuist build Looper            # Build
-tuist test Looper             # Run tests
-tuist test Looper -- -only-testing:LooperTests/AppFeatureTests/onAppear  # Single test
+./scripts/test.sh             # Run tests
+./scripts/test.sh -only-testing:LooperTests/AppFeatureTests/testOnAppearShowsSetupWizardWhenSetupIncomplete  # Single test
 tuist clean                   # Clean
 tuist edit                    # Edit Tuist manifests in Xcode
 ```
@@ -27,25 +27,32 @@ Use `XcodeBuildMCP` MCP server for Xcode build diagnostics, simulator management
 
 ## MVP Scope
 
-**In scope**: Feishu adapter, Claude Code agent, single repo per task, configurable polling + manual refresh
-**Deferred**: TAPD/Linear adapters, Codex, multi-repo tasks, review agent, memory engine, AI coordinator
+**In scope**: Local Tasks provider, Feishu provider, Claude Code agent, single repo per pipeline, manual refresh + configurable polling, automatic task status writeback
+**Deferred**: TAPD/Linear providers, Codex, multi-repo tasks, review agent, memory engine, AI coordinator, visual workflow builder
 
 ## Core Concepts
 
-### Task Lifecycle
+### Domain Model
+
+- **Pipeline**: long-lived project workstation. Holds project path, execution path, default agent command, terminal session, and execution preferences.
+- **Task**: unit of work from a provider (`Local Tasks`, `Feishu`, later others).
+- **Run**: one execution of one task inside one pipeline. Can succeed, fail, or be resumed.
+- **Task Provider**: fetches tasks, inspects configuration, and writes status changes back.
+
+### Runtime Flow
 
 ```
-Feishu (task board) ──fetch──▶ Task ──user clicks──▶ auto git worktree add
-                                                      ──▶ auto launch Claude Code terminal
-                                                      ──▶ status writeback to Feishu
+Task Provider ──fetch──▶ Task ──routed into──▶ Pipeline
+                                            └─▶ Run starts in embedded terminal
+                                                └─▶ status writeback to provider
 ```
 
 States: `pending` → `developing` → `done` / `failed`
 - Both agent exit and user action can trigger state transitions
 - Agent crash/timeout → `failed` state
-- Task completion → worktree destroyed, status written back to Feishu
-- Task filter and polling interval are user-configurable
-- Feishu status writeback maps to corresponding board columns
+- Task provider decides how tasks are loaded and where status writes back
+- Pipeline persists across tasks; runs are short-lived
+- Task filter and polling interval are user-configurable per provider when supported
 
 ### Terminal Integration (libghostty-spm)
 
@@ -64,7 +71,7 @@ TerminalSurfaceView (SwiftUI)           ← drop into any SwiftUI layout
 ```swift
 let controller = TerminalController { $0.withFontSize(13) }
 let state = TerminalViewState(controller: controller)
-state.configuration = TerminalSurfaceOptions(backend: .exec, workingDirectory: worktreePath)
+state.configuration = TerminalSurfaceOptions(backend: .exec, workingDirectory: pipelinePath)
 state.onClose = { processAlive in /* handle agent exit */ }
 
 // SwiftUI
@@ -80,10 +87,10 @@ surface.sendText("claude --task \"...\"\n")
 
 | Module | Responsibility |
 |--------|---------------|
-| **TaskBoard** | Feishu adapter — REST API polling + manual refresh, bidirectional status sync, configurable filters |
-| **AgentManager** | Claude Code process lifecycle — auto-spawn on task start, monitor, terminate |
-| **Terminal** | libghostty-spm terminal embedding, `TerminalViewState` per agent |
-| **RepoManager** | Repository config (user-set paths), git worktree create/destroy tied to task lifecycle |
+| **TaskProvider** | Provider abstraction and adapters (`Local Tasks`, `Feishu`, later others) |
+| **Pipeline** | Persistent project workstation state |
+| **Terminal** | libghostty-spm terminal embedding and session lifecycle |
+| **PipelineManager** | Local project validation plus optional execution-strategy support |
 
 ### Data Pipeline (Agent <-> App)
 
@@ -105,7 +112,7 @@ surface.sendText("claude --task \"...\"\n")
 **Note**: `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` (SE-466) is **incompatible** with TCA's `@Reducer` macro (causes circular reference). Use explicit `@MainActor` instead.
 
 - **Use explicit `@MainActor`** on views, view models, and UI-bound classes.
-- **Background work**: mark with `@concurrent` (Feishu API calls, git worktree ops, file I/O).
+- **Background work**: mark with `@concurrent` (provider API calls, process execution, file I/O).
 - **Domain models**: value types (`struct`) — automatically `Sendable`.
 - **Terminal manager**: `@MainActor @Observable class` outside TCA, communicates via `TerminalClient` dependency (Command/Event `AsyncStream`).
 - **Polling**: use `Task` + `AsyncStream` + `Task.sleep(for:)`, not Timer/GCD.
@@ -116,7 +123,7 @@ surface.sendText("claude --task \"...\"\n")
 
 - **Side effects**: Always through TCA `Effect` — no async work in views.
 - **Testing**: `TestStore` with exhaustive state assertions.
-- **Naming**: Reducers named after feature (`TaskBoard`), views suffixed with `View` (`TaskBoardView`).
+- **Naming**: Prefer provider-agnostic names (`TaskProvider`, `Pipeline`, `Run`). Do not introduce new `Workspace*` or `TaskBoard*` symbols.
 - **UI**: macOS 26 Liquid Glass style. Use system colors, dynamic type, `.glassEffect()`.
 - **Skills for code quality**: When writing/reviewing Swift code, read `~/.claude/skills/{swiftui,swiftdata,swift-concurrency,swift-testing}-pro/*/references/` — especially `api.md` first to avoid deprecated APIs. Also use `/swiftui-expert-skill` for Liquid Glass and macOS patterns.
 
@@ -128,11 +135,10 @@ Tuist.swift                       # Tuist config
 Tuist/Package.swift               # SPM dependencies
 Looper/Sources/
   App/                            # LooperApp, AppFeature, AppView
-  Features/TaskBoard/             # Feishu integration
+  Features/Pipeline/              # Pipeline state and lifecycle
   Features/Terminal/              # libghostty-spm terminal management
-  Features/RepoManager/           # Git worktree operations
   Clients/                        # TCA dependency clients
-  Domain/                         # Domain models (LooperTask, etc.)
+  Domain/                         # Domain models (task, provider config, pipeline state)
 Looper/Resources/
 LooperTests/
 ```
@@ -141,3 +147,4 @@ LooperTests/
 
 - `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` breaks TCA's `@Reducer` macro with circular reference errors. Do not enable it.
 - TCA `TestStore` init is `@MainActor` — all test suites using it must be marked `@MainActor`.
+- `tuist test` on Tuist `4.108.1` drops `Testables` from generated schemes for this project. Use [`scripts/test.sh`](/Users/jarvis/Documents/GitHub/looper/scripts/test.sh) instead.

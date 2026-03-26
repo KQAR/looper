@@ -1,6 +1,6 @@
 import Foundation
 
-struct TaskBoardInspection: Equatable, Sendable {
+struct TaskProviderInspection: Equatable, Sendable {
     var previewTaskCount: Int
     var discoveredFieldNames: [String]
     var detectedStatusValues: [String]

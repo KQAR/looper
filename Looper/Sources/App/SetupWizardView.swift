@@ -74,8 +74,8 @@ struct SetupWizardView: View {
         switch store.setupStep {
         case .welcome:
             welcomeStep
-        case .taskBoard:
-            taskBoardStep
+        case .taskSource:
+            taskSourceStep
         case .environment:
             environmentStep
         case .finish:
@@ -86,20 +86,20 @@ struct SetupWizardView: View {
     private var welcomeStep: some View {
         VStack(alignment: .leading, spacing: 18) {
             setupCard {
-                Text("Looper turns a Feishu task into a live local execution context.")
+                Text("Looper turns a task into a live local execution context.")
                     .font(.title3.weight(.semibold))
 
-                Text("The first-run flow connects your task board, verifies that Claude can run locally, and then drops you back into the inbox ready to start the first task.")
+                Text("Pick a task source, verify that Claude can run locally, and come back to the inbox ready to start work.")
                     .foregroundStyle(.secondary)
 
                 VStack(alignment: .leading, spacing: 12) {
                     welcomeBullet(
-                        title: "Connect one Feishu Bitable table",
-                        detail: "Looper fetches tasks and writes `developing`, `done`, and `failed` back to the same table."
+                        title: "Choose a task provider",
+                        detail: "Start with Local Tasks for an offline workflow, or connect one Feishu Bitable table."
                     )
                     welcomeBullet(
                         title: "Verify Git and Claude CLI",
-                        detail: "The app checks the local environment before you start any task."
+                        detail: "Looper checks the local environment before it launches any task."
                     )
                     welcomeBullet(
                         title: "Run the first task end-to-end",
@@ -110,106 +110,42 @@ struct SetupWizardView: View {
         }
     }
 
-    private var taskBoardStep: some View {
+    private var taskSourceStep: some View {
         VStack(alignment: .leading, spacing: 18) {
             setupCard {
-                Text("Connection")
+                Text("Task Provider")
                     .font(.headline)
 
-                labeledField("App ID") {
-                    TextField("cli_xxx", text: taskBoardAppIDBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                labeledField("App Secret") {
-                    SecureField("xxx", text: taskBoardAppSecretBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                labeledField("Bitable App Token") {
-                    TextField("bascn_xxx", text: taskBoardAppTokenBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                labeledField("Table ID") {
-                    TextField("tblxxx", text: taskBoardTableIDBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                Button {
-                    store.send(.testTaskBoardConnectionButtonTapped)
-                } label: {
-                    if store.isInspectingTaskBoard {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Label("Test Connection", systemImage: "bolt.horizontal.circle")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(store.isInspectingTaskBoard)
-            }
-
-            setupCard {
-                Text("Field Mapping")
-                    .font(.headline)
-
-                Text("Field names must match the table exactly. Testing the connection will auto-suggest mappings when matching fields are found.")
+                Text("The rest of the app uses one unified task model. This choice only controls where tasks come from and where status writes back.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
-                labeledField("Title Field") {
-                    TextField("Title", text: taskBoardTitleFieldBinding)
-                        .textFieldStyle(.roundedBorder)
+                Picker("Task Provider", selection: taskProviderKindBinding) {
+                    ForEach(TaskProviderKind.allCases, id: \.self) { kind in
+                        Text(kind.label).tag(kind)
+                    }
                 }
+                .pickerStyle(.segmented)
 
-                labeledField("Summary Field") {
-                    TextField("Summary", text: taskBoardSummaryFieldBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                labeledField("Status Field") {
-                    TextField("Status", text: taskBoardStatusFieldBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                labeledField("Repository Field") {
-                    TextField("Repository", text: taskBoardRepositoryFieldBinding)
-                        .textFieldStyle(.roundedBorder)
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(TaskProviderKind.allCases, id: \.self) { kind in
+                        providerOptionCard(kind)
+                    }
                 }
             }
 
-            setupCard {
-                Text("Status Mapping")
-                    .font(.headline)
-
-                labeledField("Pending Value") {
-                    TextField("pending", text: taskBoardPendingValueBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                labeledField("Running Value") {
-                    TextField("developing", text: taskBoardDevelopingValueBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                labeledField("Done Value") {
-                    TextField("done", text: taskBoardDoneValueBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                labeledField("Failed Value") {
-                    TextField("failed", text: taskBoardFailedValueBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
+            if selectedProviderKind == .feishu {
+                feishuConfigurationStep
+            } else {
+                localProviderStep
             }
 
-            if let inspection = store.taskBoardInspection {
+            if let inspection = store.taskProviderInspection {
                 setupCard {
-                    Text("Connection Result")
+                    Text(selectedProviderKind == .feishu ? "Connection Result" : "Local Provider Snapshot")
                         .font(.headline)
 
-                    Text("Previewed \(inspection.previewTaskCount) records from the selected table.")
+                    Text(providerInspectionSummary(inspection))
                         .foregroundStyle(.secondary)
 
                     if !inspection.discoveredFieldNames.isEmpty {
@@ -228,6 +164,136 @@ struct SetupWizardView: View {
         }
     }
 
+    private var feishuConfigurationStep: some View {
+        Group {
+            setupCard {
+                Text("Feishu Connection")
+                    .font(.headline)
+
+                labeledField("App ID") {
+                    TextField("cli_xxx", text: feishuAppIDBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                labeledField("App Secret") {
+                    SecureField("xxx", text: feishuAppSecretBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                labeledField("Bitable App Token") {
+                    TextField("bascn_xxx", text: feishuAppTokenBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                labeledField("Table ID") {
+                    TextField("tblxxx", text: feishuTableIDBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                Button {
+                    store.send(.inspectTaskProviderButtonTapped)
+                } label: {
+                    if store.isInspectingTaskProvider {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("Test Feishu Connection", systemImage: "bolt.horizontal.circle")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(store.isInspectingTaskProvider)
+            }
+
+            setupCard {
+                Text("Field Mapping")
+                    .font(.headline)
+
+                Text("Field names must match the table exactly. Testing the connection will auto-suggest mappings when matching fields are found.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                labeledField("Title Field") {
+                    TextField("Title", text: feishuTitleFieldBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                labeledField("Summary Field") {
+                    TextField("Summary", text: feishuSummaryFieldBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                labeledField("Status Field") {
+                    TextField("Status", text: feishuStatusFieldBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                labeledField("Repository Field") {
+                    TextField("Repository", text: feishuProjectFieldBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+
+            setupCard {
+                Text("Status Mapping")
+                    .font(.headline)
+
+                labeledField("Pending Value") {
+                    TextField("pending", text: feishuPendingValueBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                labeledField("Running Value") {
+                    TextField("developing", text: feishuDevelopingValueBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                labeledField("Done Value") {
+                    TextField("done", text: feishuDoneValueBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                labeledField("Failed Value") {
+                    TextField("failed", text: feishuFailedValueBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+        }
+    }
+
+    private var localProviderStep: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            setupCard {
+                Text("Local Tasks")
+                    .font(.headline)
+
+                Text("Local Tasks keeps the inbox inside Looper. Tasks are persisted on this Mac and status updates stay local.")
+                    .foregroundStyle(.secondary)
+
+                welcomeBullet(
+                    title: "No external credentials",
+                    detail: "You can finish setup without connecting any third-party system."
+                )
+                welcomeBullet(
+                    title: "Best for solo workflows",
+                    detail: "Use it when you want a private queue or need the app to work offline."
+                )
+
+                Button {
+                    store.send(.inspectTaskProviderButtonTapped)
+                } label: {
+                    if store.isInspectingTaskProvider {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("Inspect Local Tasks", systemImage: "tray.full")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.isInspectingTaskProvider)
+            }
+        }
+    }
+
     private var environmentStep: some View {
         VStack(alignment: .leading, spacing: 18) {
             setupCard {
@@ -235,7 +301,7 @@ struct SetupWizardView: View {
                     .font(.headline)
 
                 labeledField("Default Project Path") {
-                    TextField("/Users/you/project", text: defaultRepositoryPathBinding)
+                    TextField("/Users/you/project", text: defaultProjectPathBinding)
                         .textFieldStyle(.roundedBorder)
                 }
 
@@ -288,10 +354,8 @@ struct SetupWizardView: View {
                     .font(.headline)
 
                 welcomeBullet(
-                    title: "Feishu task board connected",
-                    detail: store.taskBoardInspection == nil
-                        ? "Connection has not been tested in this session, but the current configuration is saved."
-                        : "The selected table responded and field discovery completed."
+                    title: "\(selectedProviderKind.label) ready",
+                    detail: providerReadyDetail
                 )
                 welcomeBullet(
                     title: "Local environment verified",
@@ -301,7 +365,7 @@ struct SetupWizardView: View {
                 )
                 welcomeBullet(
                     title: "After finishing",
-                    detail: "Looper will refresh the inbox and return you to the main window ready to launch the first task."
+                    detail: finishStepDetail
                 )
             }
         }
@@ -322,7 +386,7 @@ struct SetupWizardView: View {
                 Button {
                     store.send(.finishSetupButtonTapped)
                 } label: {
-                    if store.isFinishingSetup || store.workspace.isSavingPreferences {
+                    if store.isFinishingSetup || store.pipeline.isSavingPreferences {
                         ProgressView()
                             .controlSize(.small)
                     } else {
@@ -341,12 +405,16 @@ struct SetupWizardView: View {
         }
     }
 
+    private var selectedProviderKind: TaskProviderKind {
+        store.pipeline.preferences.taskProviderConfiguration.kind
+    }
+
     private var stepSubtitle: String {
         switch store.setupStep {
         case .welcome:
             "A quick path from first launch to the first running task."
-        case .taskBoard:
-            "Connect one Feishu Bitable table and confirm the field mapping."
+        case .taskSource:
+            "Choose the task source you want Looper to orchestrate."
         case .environment:
             "Verify that the local machine can launch Claude and manage repositories."
         case .finish:
@@ -358,8 +426,8 @@ struct SetupWizardView: View {
         switch store.setupStep {
         case .welcome:
             true
-        case .taskBoard:
-            store.taskBoardInspection != nil
+        case .taskSource:
+            selectedProviderKind == .local || store.taskProviderInspection != nil
         case .environment:
             store.environmentReport?.isReady == true
         case .finish:
@@ -368,8 +436,30 @@ struct SetupWizardView: View {
     }
 
     private var canFinish: Bool {
-        store.workspace.preferences.taskBoardConfiguration.isConfigured
+        store.pipeline.preferences.taskProviderConfiguration.canFetchTasks
             && store.environmentReport?.isReady == true
+    }
+
+    private var providerReadyDetail: String {
+        switch selectedProviderKind {
+        case .local:
+            return store.taskProviderInspection == nil
+                ? "Local Tasks is selected as the inbox source for this Mac."
+                : "Looper found \(store.taskProviderInspection?.previewTaskCount ?? 0) local tasks on this Mac."
+        case .feishu:
+            return store.taskProviderInspection == nil
+                ? "The current Feishu configuration is saved, even if it was not tested in this session."
+                : "The selected Feishu table responded and field discovery completed."
+        }
+    }
+
+    private var finishStepDetail: String {
+        switch selectedProviderKind {
+        case .local:
+            "Looper will open the inbox ready for you to create and launch local tasks."
+        case .feishu:
+            "Looper will refresh the inbox and return you to the main window ready to launch the first synced task."
+        }
     }
 
     private func stepBadgeTitle(_ step: AppFeature.SetupStep) -> String {
@@ -380,6 +470,42 @@ struct SetupWizardView: View {
             return "Current"
         }
         return "Next"
+    }
+
+    private func providerInspectionSummary(_ inspection: TaskProviderInspection) -> String {
+        switch selectedProviderKind {
+        case .local:
+            return "Previewed \(inspection.previewTaskCount) locally persisted tasks."
+        case .feishu:
+            return "Previewed \(inspection.previewTaskCount) records from the selected Feishu table."
+        }
+    }
+
+    @ViewBuilder
+    private func providerOptionCard(_ kind: TaskProviderKind) -> some View {
+        let isSelected = selectedProviderKind == kind
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(kind.label)
+                    .font(.body.weight(.semibold))
+                Spacer()
+                AppStatusBadge(title: isSelected ? "Selected" : "Available")
+            }
+
+            Text(kind.subtitle)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(isSelected ? Color.accentColor.opacity(0.35) : Color.clear, lineWidth: 1)
+        }
     }
 
     @ViewBuilder
@@ -443,101 +569,108 @@ struct SetupWizardView: View {
         .padding(.vertical, 2)
     }
 
-    private var defaultRepositoryPathBinding: Binding<String> {
+    private var taskProviderKindBinding: Binding<TaskProviderKind> {
         Binding(
-            get: { store.workspace.preferences.defaultRepositoryPath },
-            set: { store.send(.workspace(.binding(.set(\.preferences.defaultRepositoryPath, $0)))) }
+            get: { store.pipeline.preferences.taskProviderConfiguration.kind },
+            set: { store.send(.selectTaskProvider($0)) }
+        )
+    }
+
+    private var defaultProjectPathBinding: Binding<String> {
+        Binding(
+            get: { store.pipeline.preferences.defaultProjectPath },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.defaultProjectPath, $0)))) }
         )
     }
 
     private var defaultAgentCommandBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.defaultAgentCommand },
-            set: { store.send(.workspace(.binding(.set(\.preferences.defaultAgentCommand, $0)))) }
+            get: { store.pipeline.preferences.defaultAgentCommand },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.defaultAgentCommand, $0)))) }
         )
     }
 
-    private var taskBoardAppIDBinding: Binding<String> {
+    private var feishuAppIDBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.taskBoardConfiguration.appID },
-            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.appID, $0)))) }
+            get: { store.pipeline.preferences.feishuProviderConfiguration.appID },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.feishuProviderConfiguration.appID, $0)))) }
         )
     }
 
-    private var taskBoardAppSecretBinding: Binding<String> {
+    private var feishuAppSecretBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.taskBoardConfiguration.appSecret },
-            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.appSecret, $0)))) }
+            get: { store.pipeline.preferences.feishuProviderConfiguration.appSecret },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.feishuProviderConfiguration.appSecret, $0)))) }
         )
     }
 
-    private var taskBoardAppTokenBinding: Binding<String> {
+    private var feishuAppTokenBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.taskBoardConfiguration.appToken },
-            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.appToken, $0)))) }
+            get: { store.pipeline.preferences.feishuProviderConfiguration.appToken },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.feishuProviderConfiguration.appToken, $0)))) }
         )
     }
 
-    private var taskBoardTableIDBinding: Binding<String> {
+    private var feishuTableIDBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.taskBoardConfiguration.tableID },
-            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.tableID, $0)))) }
+            get: { store.pipeline.preferences.feishuProviderConfiguration.tableID },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.feishuProviderConfiguration.tableID, $0)))) }
         )
     }
 
-    private var taskBoardTitleFieldBinding: Binding<String> {
+    private var feishuTitleFieldBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.taskBoardConfiguration.titleFieldName },
-            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.titleFieldName, $0)))) }
+            get: { store.pipeline.preferences.feishuProviderConfiguration.titleFieldName },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.feishuProviderConfiguration.titleFieldName, $0)))) }
         )
     }
 
-    private var taskBoardSummaryFieldBinding: Binding<String> {
+    private var feishuSummaryFieldBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.taskBoardConfiguration.summaryFieldName },
-            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.summaryFieldName, $0)))) }
+            get: { store.pipeline.preferences.feishuProviderConfiguration.summaryFieldName },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.feishuProviderConfiguration.summaryFieldName, $0)))) }
         )
     }
 
-    private var taskBoardStatusFieldBinding: Binding<String> {
+    private var feishuStatusFieldBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.taskBoardConfiguration.statusFieldName },
-            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.statusFieldName, $0)))) }
+            get: { store.pipeline.preferences.feishuProviderConfiguration.statusFieldName },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.feishuProviderConfiguration.statusFieldName, $0)))) }
         )
     }
 
-    private var taskBoardRepositoryFieldBinding: Binding<String> {
+    private var feishuProjectFieldBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.taskBoardConfiguration.repoPathFieldName },
-            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.repoPathFieldName, $0)))) }
+            get: { store.pipeline.preferences.feishuProviderConfiguration.repoPathFieldName },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.feishuProviderConfiguration.repoPathFieldName, $0)))) }
         )
     }
 
-    private var taskBoardPendingValueBinding: Binding<String> {
+    private var feishuPendingValueBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.taskBoardConfiguration.pendingStatusValue },
-            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.pendingStatusValue, $0)))) }
+            get: { store.pipeline.preferences.feishuProviderConfiguration.pendingStatusValue },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.feishuProviderConfiguration.pendingStatusValue, $0)))) }
         )
     }
 
-    private var taskBoardDevelopingValueBinding: Binding<String> {
+    private var feishuDevelopingValueBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.taskBoardConfiguration.developingStatusValue },
-            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.developingStatusValue, $0)))) }
+            get: { store.pipeline.preferences.feishuProviderConfiguration.developingStatusValue },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.feishuProviderConfiguration.developingStatusValue, $0)))) }
         )
     }
 
-    private var taskBoardDoneValueBinding: Binding<String> {
+    private var feishuDoneValueBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.taskBoardConfiguration.doneStatusValue },
-            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.doneStatusValue, $0)))) }
+            get: { store.pipeline.preferences.feishuProviderConfiguration.doneStatusValue },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.feishuProviderConfiguration.doneStatusValue, $0)))) }
         )
     }
 
-    private var taskBoardFailedValueBinding: Binding<String> {
+    private var feishuFailedValueBinding: Binding<String> {
         Binding(
-            get: { store.workspace.preferences.taskBoardConfiguration.failedStatusValue },
-            set: { store.send(.workspace(.binding(.set(\.preferences.taskBoardConfiguration.failedStatusValue, $0)))) }
+            get: { store.pipeline.preferences.feishuProviderConfiguration.failedStatusValue },
+            set: { store.send(.pipeline(.binding(.set(\.preferences.feishuProviderConfiguration.failedStatusValue, $0)))) }
         )
     }
 }

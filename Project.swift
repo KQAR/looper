@@ -3,6 +3,7 @@ import ProjectDescription
 let project = Project(
     name: "Looper",
     options: .options(
+        automaticSchemesOptions: .disabled,
         defaultKnownRegions: ["en", "zh-Hans"],
         developmentRegion: "en"
     ),
@@ -40,10 +41,27 @@ let project = Project(
             destinations: .macOS,
             product: .unitTests,
             bundleId: "com.jarvis.looper.tests",
+            infoPlist: .default,
             sources: ["LooperTests/**"],
             dependencies: [
                 .target(name: "Looper"),
             ]
+        ),
+    ],
+    schemes: [
+        .scheme(
+            name: "Looper",
+            buildAction: .buildAction(targets: ["Looper"]),
+            runAction: .runAction(executable: "Looper")
+        ),
+        .scheme(
+            name: "Looper-Testing",
+            buildAction: .buildAction(targets: ["Looper", "LooperTests"]),
+            testAction: .targets(
+                ["LooperTests"],
+                expandVariableFromTarget: "Looper"
+            ),
+            runAction: .runAction(executable: "Looper")
         ),
     ]
 )

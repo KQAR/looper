@@ -4,12 +4,12 @@ import Foundation
 @Reducer
 struct AppFeature {
     @Dependency(\.environmentSetupClient) var environmentSetupClient
-    @Dependency(\.taskBoardClient) var taskBoardClient
-    @Dependency(\.terminalWorkspaceClient) var terminalWorkspaceClient
+    @Dependency(\.taskProviderClient) var taskProviderClient
+    @Dependency(\.pipelineTerminalClient) var pipelineTerminalClient
 
     enum SetupStep: Int, CaseIterable, Equatable, Sendable {
         case welcome
-        case taskBoard
+        case taskSource
         case environment
         case finish
 
@@ -17,8 +17,8 @@ struct AppFeature {
             switch self {
             case .welcome:
                 "Welcome"
-            case .taskBoard:
-                "Connect Feishu"
+            case .taskSource:
+                "Choose Task Source"
             case .environment:
                 "Check Environment"
             case .finish:
@@ -47,52 +47,59 @@ struct AppFeature {
         var selectedTaskID: LooperTask.ID?
         var isLoadingTasks = false
         var updatingTaskIDs: Set<LooperTask.ID> = []
-        var taskBoardErrorMessage: String?
+        var taskProviderErrorMessage: String?
         var isSetupWizardPresented = false
         var setupStep: SetupStep = .welcome
-        var isInspectingTaskBoard = false
-        var taskBoardInspection: TaskBoardInspection?
+        var isInspectingTaskProvider = false
+        var taskProviderInspection: TaskProviderInspection?
         var isCheckingEnvironment = false
         var environmentReport: EnvironmentSetupReport?
         var isFinishingSetup = false
-        var workspace = WorkspaceFeature.State()
+        var isLocalTaskComposerPresented = false
+        var isCreatingLocalTask = false
+        var pipeline = PipelineFeature.State()
     }
 
     enum Action {
         case advanceSetupStepButtonTapped
         case backSetupStepButtonTapped
-        case dismissTaskBoardError
+        case dismissTaskProviderError
+        case dismissLocalTaskComposerButtonTapped
         case dismissSetupWizardButtonTapped
         case environmentCheckResponse(EnvironmentSetupReport)
         case finishSetupButtonTapped
+        case createLocalTaskButtonTapped(LocalTaskDraft)
+        case localTaskCreateResponse(Result<LooperTask, TaskProviderFailure>)
         case markSelectedTaskDoneButtonTapped
         case markSelectedTaskFailedButtonTapped
         case onAppear
+        case openLocalTaskComposerButtonTapped
         case openSetupButtonTapped
+        case selectTaskProvider(TaskProviderKind)
         case refreshTasksButtonTapped
         case runEnvironmentCheckButtonTapped
         case selectTask(LooperTask.ID?)
         case startSelectedTaskButtonTapped
-        case testTaskBoardConnectionButtonTapped
-        case taskBoardInspectionResponse(Result<TaskBoardInspection, TaskBoardFailure>)
-        case taskResponse(Result<[LooperTask], TaskBoardFailure>)
+        case inspectTaskProviderButtonTapped
+        case taskProviderInspectionResponse(Result<TaskProviderInspection, TaskProviderFailure>)
+        case taskResponse(Result<[LooperTask], TaskProviderFailure>)
         case taskStatusUpdateResponse(Result<TaskStatusUpdate, TaskStatusFailure>)
-        case terminalEventReceived(WorkspaceTerminalEvent)
-        case workspace(WorkspaceFeature.Action)
+        case terminalEventReceived(PipelineTerminalEvent)
+        case pipeline(PipelineFeature.Action)
     }
 
     var body: some ReducerOf<Self> {
-        Scope(state: \.workspace, action: \.workspace) {
-            WorkspaceFeature()
+        Scope(state: \.pipeline, action: \.pipeline) {
+            PipelineFeature()
         }
 
         Reduce { state, action in
             switch action {
             case .onAppear:
                 return .merge(
-                    .send(.workspace(.onAppear)),
+                    .send(.pipeline(.onAppear)),
                     .run { send in
-                        let events = await terminalWorkspaceClient.events()
+                        let events = await pipelineTerminalClient.events()
                         for await event in events {
                             await send(.terminalEventReceived(event))
                         }
@@ -101,12 +108,30 @@ struct AppFeature {
 
             case .openSetupButtonTapped:
                 state.isSetupWizardPresented = true
-                state.setupStep = state.workspace.preferences.hasCompletedOnboarding ? .taskBoard : .welcome
+                state.setupStep = state.pipeline.preferences.hasCompletedOnboarding ? .taskSource : .welcome
+                return .none
+
+            case let .selectTaskProvider(kind):
+                state.pipeline.preferences.taskProviderConfiguration.kind = kind
+                state.taskProviderInspection = nil
+                state.taskProviderErrorMessage = nil
+                return .none
+
+            case .openLocalTaskComposerButtonTapped:
+                guard state.pipeline.preferences.taskProviderConfiguration.kind == .local else {
+                    return .none
+                }
+                state.isLocalTaskComposerPresented = true
+                return .none
+
+            case .dismissLocalTaskComposerButtonTapped:
+                state.isLocalTaskComposerPresented = false
+                state.isCreatingLocalTask = false
                 return .none
 
             case .dismissSetupWizardButtonTapped:
                 state.isSetupWizardPresented = false
-                state.isInspectingTaskBoard = false
+                state.isInspectingTaskProvider = false
                 state.isCheckingEnvironment = false
                 return .none
 
@@ -132,57 +157,63 @@ struct AppFeature {
                 state.isCheckingEnvironment = false
                 return .none
 
-            case .testTaskBoardConnectionButtonTapped:
-                let configuration = state.workspace.preferences.taskBoardConfiguration
-                guard configuration.minimumConnectionFieldsArePresent else {
-                    state.taskBoardErrorMessage = "App ID, app secret, app token, and table ID are required."
+            case .inspectTaskProviderButtonTapped:
+                let configuration = state.pipeline.preferences.taskProviderConfiguration
+                if configuration.kind == .feishu,
+                   !configuration.feishu.minimumConnectionFieldsArePresent
+                {
+                    state.taskProviderErrorMessage = "App ID, app secret, app token, and table ID are required."
                     return .none
                 }
 
-                state.isInspectingTaskBoard = true
-                state.taskBoardInspection = nil
-                state.taskBoardErrorMessage = nil
+                state.isInspectingTaskProvider = true
+                state.taskProviderInspection = nil
+                state.taskProviderErrorMessage = nil
 
                 return .run { send in
                     do {
-                        let inspection = try await taskBoardClient.inspectConfiguration(configuration)
-                        await send(.taskBoardInspectionResponse(.success(inspection)))
+                        let inspection = try await taskProviderClient.inspectConfiguration(configuration)
+                        await send(.taskProviderInspectionResponse(.success(inspection)))
                     } catch {
                         await send(
-                            .taskBoardInspectionResponse(
+                            .taskProviderInspectionResponse(
                                 .failure(.init(description: error.localizedDescription))
                             )
                         )
                     }
                 }
 
-            case let .taskBoardInspectionResponse(.success(inspection)):
-                state.isInspectingTaskBoard = false
-                state.taskBoardInspection = inspection
-                autofillTaskBoardMappings(
-                    inspection: inspection,
-                    configuration: &state.workspace.preferences.taskBoardConfiguration
-                )
+            case let .taskProviderInspectionResponse(.success(inspection)):
+                state.isInspectingTaskProvider = false
+                state.taskProviderInspection = inspection
+                if state.pipeline.preferences.taskProviderConfiguration.kind == .feishu {
+                    autofillFeishuMappings(
+                        inspection: inspection,
+                        configuration: &state.pipeline.preferences.feishuProviderConfiguration
+                    )
+                }
                 return .none
 
-            case let .taskBoardInspectionResponse(.failure(error)):
-                state.isInspectingTaskBoard = false
-                state.taskBoardErrorMessage = error.description
+            case let .taskProviderInspectionResponse(.failure(error)):
+                state.isInspectingTaskProvider = false
+                state.taskProviderErrorMessage = error.description
                 return .none
 
             case .refreshTasksButtonTapped:
-                let configuration = state.workspace.preferences.taskBoardConfiguration
-                guard configuration.isConfigured else {
-                    state.taskBoardErrorMessage = "Configure Feishu App ID, secret, app token, and table ID first."
+                let configuration = state.pipeline.preferences.taskProviderConfiguration
+                guard configuration.canFetchTasks else {
+                    state.taskProviderErrorMessage = configuration.kind == .feishu
+                        ? "Configure Feishu App ID, secret, app token, and table ID first."
+                        : "Local task provider is not ready."
                     return .none
                 }
 
                 state.isLoadingTasks = true
-                state.taskBoardErrorMessage = nil
+                state.taskProviderErrorMessage = nil
 
                 return .run { send in
                     do {
-                        let tasks = try await taskBoardClient.fetchTasks(configuration)
+                        let tasks = try await taskProviderClient.fetchTasks(configuration)
                         await send(.taskResponse(.success(tasks)))
                     } catch {
                         await send(
@@ -200,44 +231,77 @@ struct AppFeature {
                 if let selectedTaskID = state.selectedTaskID,
                    state.tasks[id: selectedTaskID] != nil
                 {
-                    return syncWorkspaceSelection(state: &state)
+                    return syncPipelineSelection(state: &state)
                 }
 
-                if let matchingTaskID = taskIDMatchingSelectedWorkspace(state: state) {
+                if let matchingTaskID = taskIDMatchingSelectedPipeline(state: state) {
                     state.selectedTaskID = matchingTaskID
                 } else {
                     state.selectedTaskID = state.tasks.ids.first
                 }
 
-                return syncWorkspaceSelection(state: &state)
+                return syncPipelineSelection(state: &state)
 
             case let .taskResponse(.failure(error)):
                 state.isLoadingTasks = false
-                state.taskBoardErrorMessage = error.description
+                state.taskProviderErrorMessage = error.description
                 return .none
 
             case let .selectTask(id):
                 state.selectedTaskID = id
-                return syncWorkspaceSelection(state: &state)
+                return syncPipelineSelection(state: &state)
+
+            case let .createLocalTaskButtonTapped(draft):
+                guard state.pipeline.preferences.taskProviderConfiguration.kind == .local else {
+                    state.taskProviderErrorMessage = "Local task creation is only available for the Local Tasks provider."
+                    return .none
+                }
+
+                state.isCreatingLocalTask = true
+                let configuration = state.pipeline.preferences.taskProviderConfiguration
+                return .run { send in
+                    do {
+                        let task = try await taskProviderClient.createTask(draft, configuration)
+                        await send(.localTaskCreateResponse(.success(task)))
+                    } catch {
+                        await send(
+                            .localTaskCreateResponse(
+                                .failure(.init(description: error.localizedDescription))
+                            )
+                        )
+                    }
+                }
+
+            case let .localTaskCreateResponse(.success(task)):
+                state.isCreatingLocalTask = false
+                state.isLocalTaskComposerPresented = false
+                state.tasks.insert(task, at: 0)
+                state.selectedTaskID = task.id
+                return .none
+
+            case let .localTaskCreateResponse(.failure(error)):
+                state.isCreatingLocalTask = false
+                state.taskProviderErrorMessage = error.description
+                return .none
 
             case .startSelectedTaskButtonTapped:
                 guard let task = selectedTask(state: state) else { return .none }
 
-                if let existingWorkspaceID = workspaceID(for: task, in: state.workspace.workspaces) {
+                if let existingPipelineID = pipelineID(for: task, in: state.pipeline.pipelines) {
                     state.selectedTaskID = task.id
                     var effects: [Effect<Action>] = [
-                        .send(.workspace(.selectWorkspace(existingWorkspaceID))),
-                        .send(.workspace(.attachSelectedWorkspaceButtonTapped)),
+                        .send(.pipeline(.selectPipeline(existingPipelineID))),
+                        .send(.pipeline(.attachSelectedPipelineButtonTapped)),
                     ]
 
-                    if state.workspace.preferences.taskBoardConfiguration.isConfigured {
+                    if state.pipeline.preferences.taskProviderConfiguration.canFetchTasks {
                         effects.append(
                             writeTaskStatus(
                                 taskID: task.id,
                                 status: .developing,
-                                configuration: state.workspace.preferences.taskBoardConfiguration,
+                                configuration: state.pipeline.preferences.taskProviderConfiguration,
                                 state: &state,
-                                updateStatus: taskBoardClient.updateTaskStatus
+                                updateStatus: taskProviderClient.updateTaskStatus
                             )
                         )
                     }
@@ -249,57 +313,57 @@ struct AppFeature {
                     return .none
                 }
 
-                return .send(.workspace(.createWorkspaceFromDefaults(repoPath)))
+                return .send(.pipeline(.createPipelineFromDefaults(repoPath)))
 
             case .markSelectedTaskDoneButtonTapped:
                 guard let task = selectedTask(state: state) else { return .none }
-                guard state.workspace.preferences.taskBoardConfiguration.isConfigured else {
-                    state.taskBoardErrorMessage = "Configure Feishu task board settings before writing status back."
+                guard state.pipeline.preferences.taskProviderConfiguration.canFetchTasks else {
+                    state.taskProviderErrorMessage = "Configure the selected task provider before writing status back."
                     return .none
                 }
 
                 return writeTaskStatus(
                     taskID: task.id,
                     status: .done,
-                    configuration: state.workspace.preferences.taskBoardConfiguration,
+                    configuration: state.pipeline.preferences.taskProviderConfiguration,
                     state: &state,
-                    updateStatus: taskBoardClient.updateTaskStatus
+                    updateStatus: taskProviderClient.updateTaskStatus
                 )
 
             case .markSelectedTaskFailedButtonTapped:
                 guard let task = selectedTask(state: state) else { return .none }
-                guard state.workspace.preferences.taskBoardConfiguration.isConfigured else {
-                    state.taskBoardErrorMessage = "Configure Feishu task board settings before writing status back."
+                guard state.pipeline.preferences.taskProviderConfiguration.canFetchTasks else {
+                    state.taskProviderErrorMessage = "Configure the selected task provider before writing status back."
                     return .none
                 }
 
                 return writeTaskStatus(
                     taskID: task.id,
                     status: .failed,
-                    configuration: state.workspace.preferences.taskBoardConfiguration,
+                    configuration: state.pipeline.preferences.taskProviderConfiguration,
                     state: &state,
-                    updateStatus: taskBoardClient.updateTaskStatus
+                    updateStatus: taskProviderClient.updateTaskStatus
                 )
 
-            case let .workspace(.createWorkspaceResponse(.success(workspace))):
-                if let taskID = taskID(matching: workspace, in: state.tasks) {
+            case let .pipeline(.createPipelineResponse(.success(pipeline))):
+                if let taskID = taskID(matching: pipeline, in: state.tasks) {
                     state.selectedTaskID = taskID
 
-                    if state.workspace.preferences.taskBoardConfiguration.isConfigured {
+                    if state.pipeline.preferences.taskProviderConfiguration.canFetchTasks {
                         return writeTaskStatus(
                             taskID: taskID,
                             status: .developing,
-                            configuration: state.workspace.preferences.taskBoardConfiguration,
+                            configuration: state.pipeline.preferences.taskProviderConfiguration,
                             state: &state,
-                            updateStatus: taskBoardClient.updateTaskStatus
+                            updateStatus: taskProviderClient.updateTaskStatus
                         )
                     }
                 }
                 return .none
 
-            case let .workspace(.bootstrapResponse(.success(payload))):
+            case let .pipeline(.bootstrapResponse(.success(payload))):
                 if state.selectedTaskID == nil {
-                    state.selectedTaskID = taskIDMatchingSelectedWorkspace(state: state) ?? state.tasks.ids.first
+                    state.selectedTaskID = taskIDMatchingSelectedPipeline(state: state) ?? state.tasks.ids.first
                 }
 
                 if !payload.preferences.hasCompletedOnboarding {
@@ -308,38 +372,38 @@ struct AppFeature {
                     return .none
                 }
 
-                guard payload.preferences.taskBoardConfiguration.isConfigured else {
+                guard payload.preferences.taskProviderConfiguration.canFetchTasks else {
                     return .none
                 }
 
                 return .send(.refreshTasksButtonTapped)
 
-            case .workspace(.savePreferencesFinished):
+            case .pipeline(.savePreferencesFinished):
                 if state.isFinishingSetup {
                     state.isFinishingSetup = false
                     state.isSetupWizardPresented = false
                     state.setupStep = .finish
                 }
 
-                guard state.workspace.preferences.taskBoardConfiguration.isConfigured else {
+                guard state.pipeline.preferences.taskProviderConfiguration.canFetchTasks else {
                     return .none
                 }
 
                 return .send(.refreshTasksButtonTapped)
 
             case .finishSetupButtonTapped:
-                guard state.workspace.preferences.taskBoardConfiguration.isConfigured else {
-                    state.taskBoardErrorMessage = "Complete the Feishu setup before finishing."
+                guard state.pipeline.preferences.taskProviderConfiguration.canFetchTasks else {
+                    state.taskProviderErrorMessage = "Complete the selected task provider setup before finishing."
                     return .none
                 }
                 guard state.environmentReport?.isReady == true else {
-                    state.taskBoardErrorMessage = "Install Git and Claude CLI before finishing setup."
+                    state.taskProviderErrorMessage = "Install Git and Claude CLI before finishing setup."
                     return .none
                 }
 
-                state.workspace.preferences.hasCompletedOnboarding = true
+                state.pipeline.preferences.hasCompletedOnboarding = true
                 state.isFinishingSetup = true
-                return .send(.workspace(.savePreferencesButtonTapped))
+                return .send(.pipeline(.savePreferencesButtonTapped))
 
             case let .taskStatusUpdateResponse(.success(update)):
                 state.updatingTaskIDs.remove(update.taskID)
@@ -348,34 +412,34 @@ struct AppFeature {
 
             case let .taskStatusUpdateResponse(.failure(error)):
                 state.updatingTaskIDs.remove(error.taskID)
-                state.taskBoardErrorMessage = error.description
+                state.taskProviderErrorMessage = error.description
                 return .none
 
             case let .terminalEventReceived(event):
                 guard let suggestedStatus = event.suggestedTaskStatus else { return .none }
-                guard let workspace = state.workspace.workspaces[id: event.workspaceID] else { return .none }
-                guard let taskID = taskID(matching: workspace, in: state.tasks) else { return .none }
+                guard let pipeline = state.pipeline.pipelines[id: event.pipelineID] else { return .none }
+                guard let taskID = taskID(matching: pipeline, in: state.tasks) else { return .none }
                 guard let task = state.tasks[id: taskID] else { return .none }
                 guard task.status == .developing else { return .none }
 
-                if state.workspace.preferences.taskBoardConfiguration.isConfigured {
+                if state.pipeline.preferences.taskProviderConfiguration.canFetchTasks {
                     return writeTaskStatus(
                         taskID: taskID,
                         status: suggestedStatus,
-                        configuration: state.workspace.preferences.taskBoardConfiguration,
+                        configuration: state.pipeline.preferences.taskProviderConfiguration,
                         state: &state,
-                        updateStatus: taskBoardClient.updateTaskStatus
+                        updateStatus: taskProviderClient.updateTaskStatus
                     )
                 }
 
                 updateTaskStatus(id: taskID, status: suggestedStatus, state: &state)
                 return .none
 
-            case .dismissTaskBoardError:
-                state.taskBoardErrorMessage = nil
+            case .dismissTaskProviderError:
+                state.taskProviderErrorMessage = nil
                 return .none
 
-            case .workspace:
+            case .pipeline:
                 return .none
 
             }
@@ -388,52 +452,52 @@ private func selectedTask(state: AppFeature.State) -> LooperTask? {
     return state.tasks[id: selectedTaskID]
 }
 
-private func syncWorkspaceSelection(state: inout AppFeature.State) -> Effect<AppFeature.Action> {
+private func syncPipelineSelection(state: inout AppFeature.State) -> Effect<AppFeature.Action> {
     guard let task = selectedTask(state: state) else {
-        return .send(.workspace(.selectWorkspace(nil)))
+        return .send(.pipeline(.selectPipeline(nil)))
     }
 
-    guard let workspaceID = workspaceID(for: task, in: state.workspace.workspaces) else {
-        state.workspace.selectedWorkspaceID = nil
+    guard let pipelineID = pipelineID(for: task, in: state.pipeline.pipelines) else {
+        state.pipeline.selectedPipelineID = nil
         return .none
     }
 
-    state.workspace.selectedWorkspaceID = workspaceID
-    return .send(.workspace(.selectWorkspace(workspaceID)))
+    state.pipeline.selectedPipelineID = pipelineID
+    return .send(.pipeline(.selectPipeline(pipelineID)))
 }
 
-private func workspaceID(
+private func pipelineID(
     for task: LooperTask,
-    in workspaces: IdentifiedArrayOf<CodingWorkspace>
+    in pipelines: IdentifiedArrayOf<Pipeline>
 ) -> UUID? {
     guard let taskPath = task.repoPath?.standardizedFileURL.path(percentEncoded: false) else {
         return nil
     }
 
-    return workspaces.first {
-        $0.worktreeURL.standardizedFileURL.path(percentEncoded: false) == taskPath
+    return pipelines.first {
+        $0.executionURL.standardizedFileURL.path(percentEncoded: false) == taskPath
     }?.id
 }
 
 private func taskID(
-    matching workspace: CodingWorkspace,
+    matching pipeline: Pipeline,
     in tasks: IdentifiedArrayOf<LooperTask>
 ) -> LooperTask.ID? {
-    let workspacePath = workspace.worktreeURL.standardizedFileURL.path(percentEncoded: false)
+    let pipelinePath = pipeline.executionURL.standardizedFileURL.path(percentEncoded: false)
 
     return tasks.first {
-        $0.repoPath?.standardizedFileURL.path(percentEncoded: false) == workspacePath
+        $0.repoPath?.standardizedFileURL.path(percentEncoded: false) == pipelinePath
     }?.id
 }
 
-private func taskIDMatchingSelectedWorkspace(state: AppFeature.State) -> LooperTask.ID? {
-    guard let workspaceID = state.workspace.selectedWorkspaceID,
-          let workspace = state.workspace.workspaces[id: workspaceID]
+private func taskIDMatchingSelectedPipeline(state: AppFeature.State) -> LooperTask.ID? {
+    guard let pipelineID = state.pipeline.selectedPipelineID,
+          let pipeline = state.pipeline.pipelines[id: pipelineID]
     else {
         return nil
     }
 
-    return taskID(matching: workspace, in: state.tasks)
+    return taskID(matching: pipeline, in: state.tasks)
 }
 
 private func updateTaskStatus(
@@ -448,9 +512,9 @@ private func updateTaskStatus(
 private func writeTaskStatus(
     taskID: LooperTask.ID,
     status: LooperTask.Status,
-    configuration: TaskBoardConfiguration,
+    configuration: TaskProviderConfiguration,
     state: inout AppFeature.State,
-    updateStatus: @escaping @Sendable (LooperTask.ID, LooperTask.Status, TaskBoardConfiguration) async throws -> Void
+    updateStatus: @escaping @Sendable (LooperTask.ID, LooperTask.Status, TaskProviderConfiguration) async throws -> Void
 ) -> Effect<AppFeature.Action> {
     guard !state.updatingTaskIDs.contains(taskID) else {
         return .none
@@ -484,9 +548,9 @@ private func previousSetupStep(before step: AppFeature.SetupStep) -> AppFeature.
     AppFeature.SetupStep(rawValue: step.rawValue - 1)
 }
 
-private func autofillTaskBoardMappings(
-    inspection: TaskBoardInspection,
-    configuration: inout TaskBoardConfiguration
+private func autofillFeishuMappings(
+    inspection: TaskProviderInspection,
+    configuration: inout FeishuTaskProviderConfiguration
 ) {
     if let field = bestFieldMatch(
         in: inspection.discoveredFieldNames,
