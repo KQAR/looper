@@ -7,45 +7,61 @@ struct AppView: View {
     let terminalRegistry: PipelineTerminalRegistry
 
     var body: some View {
-        HSplitView {
-            taskInbox
-                .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
-
-            executionStage
-                .frame(minWidth: 640, idealWidth: 840)
-
-            contextInspector
-                .frame(minWidth: 300, idealWidth: 340, maxWidth: 380)
+        NavigationSplitView {
+            pipelineSidebar
+                .navigationSplitViewColumnWidth(min: 260, ideal: 310, max: 360)
+        } detail: {
+            workspace
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(workspaceBackground)
         }
-        .padding(14)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(nsColor: .windowBackgroundColor),
-                    Color(nsColor: .underPageBackgroundColor),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
+        .navigationSplitViewStyle(.balanced)
+        .background(WindowChromeConfigurator())
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                if let selectedPipeline {
+                    Text(selectedPipeline.name)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .sharedBackgroundVisibility(.hidden)
+
+            if selectedPipeline != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    refreshTasksToolbarButton
+                }
+            }
+
+            if canCreateLocalTask {
+                ToolbarItem(placement: .primaryAction) {
+                    addTaskToolbarButton
+                }
+            }
+        }
         .sheet(
             isPresented: Binding(
-                get: { store.isSetupWizardPresented },
-                set: { if !$0 { store.send(.dismissSetupWizardButtonTapped) } }
+                get: { store.isSettingsPresented },
+                set: { if !$0 { store.send(.dismissSettingsButtonTapped) } }
             )
         ) {
-            SetupWizardView(store: store)
-                .frame(width: 760, height: 760)
+            SettingsView(store: store)
+                .frame(width: 820, height: 760)
                 .padding(28)
         }
         .sheet(
             isPresented: Binding(
                 get: { store.isLocalTaskComposerPresented },
-                set: { if !$0 { store.send(.dismissLocalTaskComposerButtonTapped) } }
+                set: {
+                    if !$0 { store.send(.dismissLocalTaskComposerButtonTapped) }
+                }
             )
         ) {
             LocalTaskComposerView(
-                defaultProjectPath: store.pipeline.preferences.defaultProjectPath,
+                projectPath: selectedPipeline?.projectPath
+                    ?? store.pipeline.preferences.defaultProjectPath,
+                pipelineName: selectedPipeline?.name,
                 isCreating: store.isCreatingLocalTask,
                 onCancel: { store.send(.dismissLocalTaskComposerButtonTapped) },
                 onCreate: { draft in
@@ -73,376 +89,354 @@ struct AppView: View {
         }
     }
 
-    private var taskInbox: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Task Inbox")
-                        .font(.title2.weight(.semibold))
-                    Text("Tasks drive execution. Projects and terminals are attached runtime.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+    private var pipelineSidebar: some View {
+        List(
+            selection: Binding(
+                get: { store.pipeline.selectedPipelineID },
+                set: { store.send(.pipeline(.selectPipeline($0))) }
+            )
+        ) {
+            Section {
+                ForEach(store.pipeline.pipelines) { pipeline in
+                    PipelineSidebarRow(
+                        pipeline: pipeline,
+                        taskCount: taskCount(for: pipeline),
+                        activeRunTitle: activeRun(for: pipeline)?.status.label
+                    )
+                    .tag(pipeline.id)
                 }
-
-                Spacer()
-
+            } header: {
+                Text("Pipelines")
+            } footer: {
+                Text(sidebarFooter)
+            }
+        }
+        .listStyle(.sidebar)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear
+                .frame(height: 44)
+        }
+        .overlay(alignment: .bottomLeading) {
+            Button {
+                store.send(.openSettingsButtonTapped)
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .help("Settings")
+            .padding(.leading, 12)
+            .padding(.bottom, 12)
+        }
+        .toolbar {
+            ToolbarItem {
                 Button {
-                    store.send(.openSetupButtonTapped)
+                    store.send(.newPipelineButtonTapped)
                 } label: {
-                    Label("Setup", systemImage: "slider.horizontal.3")
+                    Label("New Pipeline", systemImage: "plus")
                 }
-                .buttonStyle(.bordered)
+            }
+        }
+    }
 
-                if store.pipeline.preferences.taskProviderConfiguration.kind == .local {
+    @ViewBuilder
+    private var workspace: some View {
+        if let pipeline = selectedPipeline {
+            GeometryReader { geometry in
+                VStack(alignment: .leading, spacing: 16) {
+                    taskBoard(for: pipeline)
+
+                    if shouldDisplayTerminal {
+                        terminalWorkspace(for: pipeline)
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+                .padding(.top, 0)
+                .frame(
+                    maxWidth: .infinity,
+                    maxHeight: .infinity,
+                    alignment: .topLeading
+                )
+                .frame(minHeight: geometry.size.height, alignment: .topLeading)
+            }
+            .background(.regularMaterial)
+        } else {
+            ContentUnavailableView {
+                Label(
+                    "No Pipeline Selected",
+                    systemImage: "square.stack.3d.up.slash"
+                )
+            } description: {
+                Text(noPipelineSelectedMessage)
+            } actions: {
+                Button("New Pipeline") {
+                    store.send(.newPipelineButtonTapped)
+                }
+
+                if !store.pipeline.preferences.hasCompletedOnboarding {
+                    Button("Open Settings") {
+                        store.send(.openSettingsButtonTapped)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.regularMaterial)
+        }
+    }
+
+    private func taskBoard(for pipeline: Pipeline) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 16) {
+                boardColumn(
+                    title: "未开始",
+                    subtitle: "Ready to start",
+                    tasks: boardTasks(for: pipeline, statuses: [.pending]),
+                    emptyMessage: pendingColumnEmptyMessage
+                )
+
+                boardColumn(
+                    title: "进行中",
+                    subtitle: "Actively executing",
+                    tasks: boardTasks(for: pipeline, statuses: [.developing]),
+                    emptyMessage:
+                        "No task is currently running in this pipeline."
+                )
+
+                boardColumn(
+                    title: "已结束",
+                    subtitle: "Done or failed",
+                    tasks: boardTasks(
+                        for: pipeline,
+                        statuses: [.done, .failed]
+                    ),
+                    emptyMessage:
+                        "Finished work will accumulate here for quick review."
+                )
+            }
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity,
+                alignment: .topLeading
+            )
+        }
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
+    }
+
+    private func boardColumn(
+        title: String,
+        subtitle: String,
+        tasks: [LooperTask],
+        emptyMessage: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                panelHeader(title: title, subtitle: subtitle)
+                Spacer()
+                AppStatusBadge(title: "\(tasks.count)")
+            }
+
+            if tasks.isEmpty {
+                Text(emptyMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(tasks) { task in
+                        TaskBoardCard(
+                            task: task,
+                            isSelected: task.id == selectedPipelineTask?.id,
+                            isUpdating: store.updatingTaskIDs.contains(task.id),
+                            onSelect: {
+                                store.send(.selectTask(task.id))
+                            },
+                            onStart: task.status == .pending
+                                ? {
+                                    store.send(.selectTask(task.id))
+                                    store.send(.startSelectedTaskButtonTapped)
+                                } : nil,
+                            onMarkDone: task.status == .developing
+                                ? {
+                                    store.send(.selectTask(task.id))
+                                    store.send(
+                                        .markSelectedTaskDoneButtonTapped
+                                    )
+                                } : nil,
+                            onMarkFailed: task.status == .developing
+                                ? {
+                                    store.send(.selectTask(task.id))
+                                    store.send(
+                                        .markSelectedTaskFailedButtonTapped
+                                    )
+                                } : nil
+                        )
+                    }
+                }
+            }
+        }
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
+        .padding(16)
+        .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 20))
+    }
+
+    @ViewBuilder
+    private func terminalWorkspace(for pipeline: Pipeline) -> some View {
+        if let session = activeSession {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Workspace")
+                        .font(.headline)
+                    Spacer()
                     Button {
-                        store.send(.openLocalTaskComposerButtonTapped)
+                        store.send(
+                            .pipeline(.attachSelectedPipelineButtonTapped)
+                        )
                     } label: {
-                        Label("New Task", systemImage: "plus")
+                        Label("Attach", systemImage: "terminal")
                     }
                     .buttonStyle(.bordered)
-                    .disabled(!store.pipeline.preferences.hasCompletedOnboarding)
                 }
 
-                Button {
-                    store.send(.refreshTasksButtonTapped)
-                } label: {
-                    if store.isLoadingTasks {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
+                PipelineTerminalRepresentable(session: session)
+                    .clipShape(.rect(cornerRadius: 22))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 22)
+                            .strokeBorder(.quaternary, lineWidth: 1)
                     }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(store.isLoadingTasks || !store.pipeline.preferences.hasCompletedOnboarding)
-            }
-
-            List(
-                selection: Binding(
-                    get: { store.selectedTaskID },
-                    set: { store.send(.selectTask($0)) }
-                )
-            ) {
-                ForEach(store.tasks) { task in
-                    TaskListRow(task: task)
-                        .tag(task.id)
-                }
-            }
-            .listStyle(.sidebar)
-
-            Text("\(store.tasks.count) tasks")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            if !store.pipeline.preferences.hasCompletedOnboarding {
-                Text(setupIncompleteMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else if store.tasks.isEmpty {
-                Text(emptyInboxMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(18)
-        .background(.regularMaterial, in: .rect(cornerRadius: 24))
-    }
-
-    private var executionStage: some View {
-        Group {
-            if let pipeline = selectedPipeline,
-               let session = terminalRegistry.session(id: pipeline.id)
-            {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(selectedTask?.title ?? pipeline.name)
-                                .font(.title3.weight(.semibold))
-                            Text(pipeline.executionPath)
-                                .font(.footnote.monospaced())
-                                .foregroundStyle(.secondary)
-                        }
-
-                        Spacer()
-
-                        AppStatusBadge(title: session.phase.label)
-                        if let currentRun {
-                            AppStatusBadge(title: currentRun.status.label)
-                        }
-
-                        Button {
-                            store.send(.pipeline(.attachSelectedPipelineButtonTapped))
-                        } label: {
-                            Label("Attach", systemImage: "terminal")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    PipelineTerminalRepresentable(session: session)
-                        .clipShape(.rect(cornerRadius: 22))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 22)
-                                .strokeBorder(.quaternary, lineWidth: 1)
-                        }
-                        .background(Color.black.opacity(0.92), in: .rect(cornerRadius: 22))
-                }
-                .padding(18)
-                .background(.regularMaterial, in: .rect(cornerRadius: 28))
-            } else {
-                ContentUnavailableView {
-                    Label("No Active Execution", systemImage: "terminal")
-                } description: {
-                    Text(executionEmptyStateMessage)
-                } actions: {
-                    if !store.pipeline.preferences.hasCompletedOnboarding {
-                        Button("Open Setup") {
-                            store.send(.openSetupButtonTapped)
-                        }
-                    } else if store.pipeline.preferences.taskProviderConfiguration.kind == .local && store.tasks.isEmpty {
-                        Button("Create Local Task") {
-                            store.send(.openLocalTaskComposerButtonTapped)
-                        }
-                    } else {
-                        Button("Start Task") {
-                            store.send(.startSelectedTaskButtonTapped)
-                        }
-                        .disabled(selectedTask?.repoPath == nil || isSelectedTaskUpdating)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.regularMaterial, in: .rect(cornerRadius: 28))
-            }
-        }
-    }
-
-    private var contextInspector: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                taskCard
-                executionCard
-                runsCard
-                controlsCard
-                setupCard
-            }
-            .padding(18)
-        }
-        .background(.regularMaterial, in: .rect(cornerRadius: 24))
-    }
-
-    private var taskCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Task")
-                .font(.headline)
-
-            if let task = selectedTask {
-                AppInspectorRow(label: "Title", value: task.title)
-                AppInspectorRow(label: "Status", value: task.status.label)
-                AppInspectorRow(label: "Source", value: task.source)
-                AppInspectorRow(label: "Project", value: task.repoPath?.path(percentEncoded: false) ?? "Unassigned")
-
-                Text(task.summary)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("Select a task to inspect its execution context.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(16)
-        .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 18))
-    }
-
-    private var executionCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Execution")
-                .font(.headline)
-
-            if let pipeline = selectedPipeline {
-                AppInspectorRow(label: "Pipeline", value: pipeline.name)
-                AppInspectorRow(label: "Directory", value: pipeline.executionPath)
-                AppInspectorRow(label: "Command", value: pipeline.agentCommand.ifEmpty(fallback: "Shell only"))
-                AppInspectorRow(label: "tmux", value: pipeline.tmuxSessionName)
-                AppInspectorRow(label: "Terminal", value: selectedSession?.phase.label ?? "Not Ready")
-
-                Divider()
-
-                if let currentRun {
-                    AppInspectorRow(label: "Current Run", value: currentRun.id.uuidString)
-                    AppInspectorRow(label: "Run Status", value: currentRun.status.label)
-                    AppInspectorRow(label: "Trigger", value: currentRun.trigger.label)
-                    AppInspectorRow(label: "Started", value: currentRun.startedAt.runTimestamp)
-                    AppInspectorRow(
-                        label: "Finished",
-                        value: currentRun.finishedAt?.runTimestamp ?? "In Progress"
+                    .background(
+                        Color.black.opacity(0.92),
+                        in: .rect(cornerRadius: 22)
                     )
-                    AppInspectorRow(
-                        label: "Exit Code",
-                        value: currentRun.exitCode.map(String.init) ?? "Pending"
-                    )
-                    AppInspectorRow(label: "Log Path", value: currentRun.logPath)
-                } else {
-                    Text("No active or recent run is attached to this pipeline yet.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Text("This task has no active execution pipeline yet.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
-        }
-        .padding(16)
-        .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 18))
-    }
-
-    private var runsCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Runs")
-                .font(.headline)
-
-            if recentRuns.isEmpty {
-                Text("No runs recorded for the current selection yet.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(recentRuns) { run in
-                    RunListRow(run: run)
-                    if run.id != recentRuns.last?.id {
-                        Divider()
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 18))
-    }
-
-    private var controlsCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Controls")
-                .font(.headline)
-
-            Button {
-                store.send(.startSelectedTaskButtonTapped)
-            } label: {
-                Label(selectedPipeline == nil ? "Start Task" : "Resume Task", systemImage: "play.fill")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(
-                selectedTask?.repoPath == nil
-                    || isSelectedTaskUpdating
-                    || !store.pipeline.preferences.hasCompletedOnboarding
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(
+                Color.primary.opacity(0.04),
+                in: .rect(cornerRadius: 18)
             )
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                panelHeader(
+                    title: "Workspace",
+                    subtitle: "Starting terminal session"
+                )
 
-            if let pipeline = selectedPipeline {
-                Button {
-                    store.send(.pipeline(.revealPipelineInFinderButtonTapped(pipeline.id)))
-                } label: {
-                    Label("Reveal Project", systemImage: "folder")
-                }
-                .buttonStyle(.bordered)
-
-                Button {
-                    store.send(.pipeline(.rebuildPipelineButtonTapped(pipeline.id)))
-                } label: {
-                    Label("Restart Execution", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.bordered)
-            }
-
-            Divider()
-
-            Button {
-                store.send(.markSelectedTaskDoneButtonTapped)
-            } label: {
-                Label("Mark Done", systemImage: "checkmark.circle.fill")
-            }
-            .buttonStyle(.bordered)
-            .disabled(selectedTask == nil || isSelectedTaskUpdating || !store.pipeline.preferences.hasCompletedOnboarding)
-
-            Button {
-                store.send(.markSelectedTaskFailedButtonTapped)
-            } label: {
-                Label("Mark Failed", systemImage: "xmark.circle.fill")
-            }
-            .buttonStyle(.bordered)
-            .disabled(selectedTask == nil || isSelectedTaskUpdating || !store.pipeline.preferences.hasCompletedOnboarding)
-
-            if isSelectedTaskUpdating {
-                ProgressView("Syncing task status…")
+                ProgressView("Preparing terminal surface…")
                     .controlSize(.small)
                     .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack {
+                    Spacer()
+                    Button("Attach Again") {
+                        store.send(
+                            .pipeline(.attachSelectedPipelineButtonTapped)
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(
+                Color.primary.opacity(0.04),
+                in: .rect(cornerRadius: 18)
+            )
         }
-        .padding(16)
-        .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 18))
     }
 
-    private var setupCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Setup")
-                    .font(.headline)
-                Spacer()
-                AppStatusBadge(title: store.pipeline.preferences.hasCompletedOnboarding ? "Ready" : "Required")
-            }
-
-            AppInspectorRow(
-                label: "Task Source",
-                value: taskProviderSummary
-            )
-            AppInspectorRow(
-                label: "Default Agent",
-                value: store.pipeline.preferences.defaultAgentCommand.ifEmpty(fallback: "claude")
-            )
-            AppInspectorRow(
-                label: "Environment",
-                value: environmentSummary
-            )
-
-            Text(setupHint)
+    @ViewBuilder
+    private func panelHeader(title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.headline)
+            Text(subtitle)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-
-            Button(store.pipeline.preferences.hasCompletedOnboarding ? "Edit Setup" : "Continue Setup") {
-                store.send(.openSetupButtonTapped)
-            }
-            .buttonStyle(.bordered)
         }
-        .padding(16)
-        .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 18))
     }
 
-    private var executionEmptyStateMessage: String {
+    private var workspaceBackground: some View {
+        LinearGradient(
+            colors: [
+                Color(nsColor: .windowBackgroundColor),
+                Color(nsColor: .underPageBackgroundColor),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var sidebarFooter: String {
+        if store.pipeline.pipelines.isEmpty {
+            return
+                "Create your first pipeline to keep a project workstation warm."
+        }
+        return "\(store.pipeline.pipelines.count) pipelines available"
+    }
+
+    private var noPipelineSelectedMessage: String {
         if !store.pipeline.preferences.hasCompletedOnboarding {
-            "Finish setup first. Looper needs a task source and a local Claude environment before it can launch work."
-        } else if store.pipeline.preferences.taskProviderConfiguration.kind == .local && store.tasks.isEmpty {
-            "Create a local task first, then start it to attach a project-backed terminal."
-        } else {
-            "Select a task and start it to attach a project-backed terminal."
+            return
+                "Open Settings, choose a task provider, and set local defaults before creating the first pipeline."
         }
+
+        return
+            "Create a pipeline first. The entire right side becomes that pipeline's workspace."
     }
 
-    private var setupHint: String {
-        store.pipeline.preferences.hasCompletedOnboarding
-            ? "Re-open setup any time to switch providers, test Feishu again, or verify your local tools."
-            : "A first-run setup will choose a task source, verify Claude and Git, and bring you back ready to start the first task."
+    private var refreshTasksToolbarButton: some View {
+        Button {
+            store.send(.refreshTasksButtonTapped)
+        } label: {
+            if store.isLoadingTasks {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "arrow.clockwise")
+            }
+        }
+        .disabled(
+            store.isLoadingTasks
+                || !store.pipeline.preferences.hasCompletedOnboarding
+        )
+        .help("Refresh")
     }
 
-    private var environmentSummary: String {
-        guard let report = store.environmentReport else { return "Not checked yet" }
-        return report.isReady ? "Git and Claude CLI ready" : "Environment needs attention"
-    }
-
-    private var selectedTask: LooperTask? {
-        guard let selectedTaskID = store.selectedTaskID else { return nil }
-        return store.tasks[id: selectedTaskID]
+    private var addTaskToolbarButton: some View {
+        Button {
+            store.send(.openLocalTaskComposerButtonTapped)
+        } label: {
+            Image(systemName: "plus")
+        }
+        .help("Add Task")
     }
 
     private var selectedPipeline: Pipeline? {
-        guard let selectedPipelineID = store.pipeline.selectedPipelineID else { return nil }
+        guard let selectedPipelineID = store.pipeline.selectedPipelineID else {
+            return nil
+        }
         return store.pipeline.pipelines[id: selectedPipelineID]
+    }
+
+    private var selectedPipelineTask: LooperTask? {
+        guard let selectedPipeline else { return nil }
+        guard let selectedTaskID = store.selectedTaskID,
+            let task = store.tasks[id: selectedTaskID]
+        else {
+            return nil
+        }
+        return pipelineMatchesTask(selectedPipeline, task: task) ? task : nil
     }
 
     private var selectedSession: PipelineTerminalSession? {
@@ -450,13 +444,19 @@ struct AppView: View {
         return terminalRegistry.session(id: selectedPipeline.id)
     }
 
+    private var activeSession: PipelineTerminalSession? {
+        guard shouldDisplayTerminal else { return nil }
+        return selectedSession
+    }
+
     private var currentRun: Run? {
         guard let selectedPipeline else { return nil }
 
-        if let selectedTask,
-           let matchingRun = store.runs.first(where: {
-               $0.pipelineID == selectedPipeline.id && $0.taskID == selectedTask.id && $0.isActive
-           })
+        if let selectedPipelineTask,
+            let matchingRun = store.runs.first(where: {
+                $0.pipelineID == selectedPipeline.id
+                    && $0.taskID == selectedPipelineTask.id && $0.isActive
+            })
         {
             return matchingRun
         }
@@ -464,156 +464,55 @@ struct AppView: View {
         return store.runs.first(where: { $0.pipelineID == selectedPipeline.id })
     }
 
-    private var recentRuns: [Run] {
-        guard let selectedPipeline else { return [] }
-
-        let filteredRuns = store.runs.filter { run in
-            guard run.pipelineID == selectedPipeline.id else { return false }
-            guard let selectedTask else { return true }
-            return run.taskID == selectedTask.id
+    private var shouldDisplayTerminal: Bool {
+        if currentRun?.isActive == true {
+            return true
         }
 
-        return Array(filteredRuns.prefix(4))
+        return selectedPipelineTask?.status == .developing
     }
 
-    private var isSelectedTaskUpdating: Bool {
-        guard let selectedTask else { return false }
-        return store.updatingTaskIDs.contains(selectedTask.id)
+    private var canCreateLocalTask: Bool {
+        store.pipeline.preferences.taskProviderConfiguration.kind == .local
+            && selectedPipeline != nil
     }
 
-    private var taskProviderSummary: String {
+    private var pendingColumnEmptyMessage: String {
         switch store.pipeline.preferences.taskProviderConfiguration.kind {
         case .local:
-            return "Local Tasks"
+            return "No local task has been added to this pipeline yet."
         case .feishu:
-            return store.pipeline.preferences.feishuProviderConfiguration.isConfigured ? "Feishu connected" : "Feishu not configured"
+            return "No pending task is currently mapped into this pipeline."
         }
     }
 
-    private var setupIncompleteMessage: String {
-        switch store.pipeline.preferences.taskProviderConfiguration.kind {
-        case .local:
-            "Finish setup to enable Local Tasks, verify your environment, and create the first task."
-        case .feishu:
-            "Finish setup to connect Feishu, verify your environment, and start the first task."
-        }
+    private func pipelineTasks(for pipeline: Pipeline) -> [LooperTask] {
+        store.tasks.filter { pipelineMatchesTask(pipeline, task: $0) }
     }
 
-    private var emptyInboxMessage: String {
-        switch store.pipeline.preferences.taskProviderConfiguration.kind {
-        case .local:
-            "No local tasks yet. Create one to start the first execution."
-        case .feishu:
-            "No synced tasks yet. Refresh the inbox or check the current Feishu mapping."
-        }
+    private func boardTasks(
+        for pipeline: Pipeline,
+        statuses: [LooperTask.Status]
+    ) -> [LooperTask] {
+        pipelineTasks(for: pipeline)
+            .filter { statuses.contains($0.status) }
     }
+
+    private func pipelineMatchesTask(_ pipeline: Pipeline, task: LooperTask)
+        -> Bool
+    {
+        task.repoPath?.standardizedFileURL.path(percentEncoded: false)
+            == pipeline.executionURL.standardizedFileURL.path(
+                percentEncoded: false
+            )
+    }
+
+    private func taskCount(for pipeline: Pipeline) -> Int {
+        store.tasks.filter { pipelineMatchesTask(pipeline, task: $0) }.count
+    }
+
+    private func activeRun(for pipeline: Pipeline) -> Run? {
+        store.runs.first { $0.pipelineID == pipeline.id && $0.isActive }
+    }
+
 }
-
-@MainActor
-private struct TaskListRow: View {
-    let task: LooperTask
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(task.title)
-                    .font(.headline)
-                Spacer()
-                AppStatusBadge(title: task.status.label)
-            }
-
-            Text(task.repoPath?.lastPathComponent ?? "No Project")
-                .font(.footnote.monospaced())
-                .foregroundStyle(.secondary)
-
-            Text(task.summary)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-@MainActor
-private struct AppInspectorRow: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.footnote.monospaced())
-                .textSelection(.enabled)
-        }
-    }
-}
-
-@MainActor
-private struct RunListRow: View {
-    let run: Run
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(run.status.label)
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text(run.startedAt.runTimestamp)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            }
-
-            Text(run.trigger.label)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            if let finishedAt = run.finishedAt {
-                Text("Finished \(finishedAt.runTimestamp)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Text(run.logPath)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .textSelection(.enabled)
-        }
-    }
-}
-
-@MainActor
-struct AppStatusBadge: View {
-    let title: String
-
-    var body: some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Color.primary.opacity(0.08), in: Capsule())
-    }
-}
-
-private extension String {
-    func ifEmpty(fallback: String) -> String {
-        isEmpty ? fallback : self
-    }
-}
-
-private extension Date {
-    var runTimestamp: String {
-        runTimestampFormatter.string(from: self)
-    }
-}
-
-private let runTimestampFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .medium
-    return formatter
-}()

@@ -2,7 +2,7 @@ import ComposableArchitecture
 import SwiftUI
 
 @MainActor
-struct SetupWizardView: View {
+struct SettingsView: View {
     @Bindable var store: StoreOf<AppFeature>
 
     var body: some View {
@@ -11,8 +11,20 @@ struct SetupWizardView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    progressStrip
-                    stepBody
+                    taskProviderSection
+
+                    if selectedProviderKind == .feishu {
+                        feishuConfigurationSection
+                    } else {
+                        localProviderSection
+                    }
+
+                    if let inspection = store.taskProviderInspection {
+                        inspectionSection(inspection)
+                    }
+
+                    defaultsSection
+                    environmentSection
                 }
                 .padding(.vertical, 4)
             }
@@ -34,9 +46,9 @@ struct SetupWizardView: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(store.setupStep.title)
+                Text("Settings")
                     .font(.largeTitle.weight(.bold))
-                Text(stepSubtitle)
+                Text("Configure task source, local defaults, and environment checks.")
                     .font(.body)
                     .foregroundStyle(.secondary)
             }
@@ -44,129 +56,39 @@ struct SetupWizardView: View {
             Spacer()
 
             Button("Close") {
-                store.send(.dismissSetupWizardButtonTapped)
+                store.send(.dismissSettingsButtonTapped)
             }
             .buttonStyle(.bordered)
         }
     }
 
-    private var progressStrip: some View {
-        HStack(spacing: 10) {
-            ForEach(AppFeature.SetupStep.allCases, id: \.rawValue) { step in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(step.title)
-                            .font(.footnote.weight(.semibold))
-                        Spacer()
-                        AppStatusBadge(title: stepBadgeTitle(step))
-                    }
+    private var taskProviderSection: some View {
+        settingsCard {
+            Text("Task Provider")
+                .font(.headline)
 
-                    Capsule()
-                        .fill(step.rawValue <= store.setupStep.rawValue ? Color.accentColor : Color.primary.opacity(0.08))
-                        .frame(height: 6)
+            Text("Looper uses one task model. Settings here only decide where tasks come from and where status updates are written back.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Picker("Task Provider", selection: taskProviderKindBinding) {
+                ForEach(TaskProviderKind.allCases, id: \.self) { kind in
+                    Text(kind.label).tag(kind)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(TaskProviderKind.allCases, id: \.self) { kind in
+                    providerOptionCard(kind)
                 }
             }
         }
     }
 
-    @ViewBuilder
-    private var stepBody: some View {
-        switch store.setupStep {
-        case .welcome:
-            welcomeStep
-        case .taskSource:
-            taskSourceStep
-        case .environment:
-            environmentStep
-        case .finish:
-            finishStep
-        }
-    }
-
-    private var welcomeStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            setupCard {
-                Text("Looper turns a task into a live local execution context.")
-                    .font(.title3.weight(.semibold))
-
-                Text("Pick a task source, verify that Claude can run locally, and come back to the inbox ready to start work.")
-                    .foregroundStyle(.secondary)
-
-                VStack(alignment: .leading, spacing: 12) {
-                    welcomeBullet(
-                        title: "Choose a task provider",
-                        detail: "Start with Local Tasks for an offline workflow, or connect one Feishu Bitable table."
-                    )
-                    welcomeBullet(
-                        title: "Verify Git and Claude CLI",
-                        detail: "Looper checks the local environment before it launches any task."
-                    )
-                    welcomeBullet(
-                        title: "Run the first task end-to-end",
-                        detail: "Once setup is complete, refresh the inbox and launch the first execution terminal."
-                    )
-                }
-            }
-        }
-    }
-
-    private var taskSourceStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            setupCard {
-                Text("Task Provider")
-                    .font(.headline)
-
-                Text("The rest of the app uses one unified task model. This choice only controls where tasks come from and where status writes back.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
-                Picker("Task Provider", selection: taskProviderKindBinding) {
-                    ForEach(TaskProviderKind.allCases, id: \.self) { kind in
-                        Text(kind.label).tag(kind)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(TaskProviderKind.allCases, id: \.self) { kind in
-                        providerOptionCard(kind)
-                    }
-                }
-            }
-
-            if selectedProviderKind == .feishu {
-                feishuConfigurationStep
-            } else {
-                localProviderStep
-            }
-
-            if let inspection = store.taskProviderInspection {
-                setupCard {
-                    Text(selectedProviderKind == .feishu ? "Connection Result" : "Local Provider Snapshot")
-                        .font(.headline)
-
-                    Text(providerInspectionSummary(inspection))
-                        .foregroundStyle(.secondary)
-
-                    if !inspection.discoveredFieldNames.isEmpty {
-                        chipGroup(title: "Detected Fields", values: inspection.discoveredFieldNames)
-                    }
-
-                    if !inspection.detectedStatusValues.isEmpty {
-                        chipGroup(title: "Observed Status Values", values: inspection.detectedStatusValues)
-                    }
-
-                    if !inspection.sampleTaskTitles.isEmpty {
-                        chipGroup(title: "Sample Tasks", values: inspection.sampleTaskTitles)
-                    }
-                }
-            }
-        }
-    }
-
-    private var feishuConfigurationStep: some View {
+    private var feishuConfigurationSection: some View {
         Group {
-            setupCard {
+            settingsCard {
                 Text("Feishu Connection")
                     .font(.headline)
 
@@ -197,18 +119,18 @@ struct SetupWizardView: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Label("Test Feishu Connection", systemImage: "bolt.horizontal.circle")
+                        Label("Test Connection", systemImage: "bolt.horizontal.circle")
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(store.isInspectingTaskProvider)
             }
 
-            setupCard {
+            settingsCard {
                 Text("Field Mapping")
                     .font(.headline)
 
-                Text("Field names must match the table exactly. Testing the connection will auto-suggest mappings when matching fields are found.")
+                Text("Field names must match the table exactly. A successful connection test can auto-fill matching fields.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
@@ -233,7 +155,7 @@ struct SetupWizardView: View {
                 }
             }
 
-            setupCard {
+            settingsCard {
                 Text("Status Mapping")
                     .font(.headline)
 
@@ -260,216 +182,139 @@ struct SetupWizardView: View {
         }
     }
 
-    private var localProviderStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            setupCard {
-                Text("Local Tasks")
+    private var localProviderSection: some View {
+        settingsCard {
+            Text("Local Tasks")
+                .font(.headline)
+
+            Text("Local Tasks keeps the inbox entirely on this Mac. Tasks persist locally and status updates never leave the machine.")
+                .foregroundStyle(.secondary)
+
+            settingsBullet(
+                title: "No external credentials",
+                detail: "Useful for private queues, offline work, and single-machine flows."
+            )
+            settingsBullet(
+                title: "Fastest path to usage",
+                detail: "Create a pipeline, add a local task, and launch work without any third-party service."
+            )
+
+            Button {
+                store.send(.inspectTaskProviderButtonTapped)
+            } label: {
+                if store.isInspectingTaskProvider {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label("Inspect Local Tasks", systemImage: "tray.full")
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(store.isInspectingTaskProvider)
+        }
+    }
+
+    private func inspectionSection(_ inspection: TaskProviderInspection) -> some View {
+        settingsCard {
+            Text(selectedProviderKind == .feishu ? "Connection Result" : "Local Provider Snapshot")
+                .font(.headline)
+
+            Text(providerInspectionSummary(inspection))
+                .foregroundStyle(.secondary)
+
+            if !inspection.discoveredFieldNames.isEmpty {
+                chipGroup(title: "Detected Fields", values: inspection.discoveredFieldNames)
+            }
+
+            if !inspection.detectedStatusValues.isEmpty {
+                chipGroup(title: "Observed Status Values", values: inspection.detectedStatusValues)
+            }
+
+            if !inspection.sampleTaskTitles.isEmpty {
+                chipGroup(title: "Sample Tasks", values: inspection.sampleTaskTitles)
+            }
+        }
+    }
+
+    private var defaultsSection: some View {
+        settingsCard {
+            Text("Execution Defaults")
+                .font(.headline)
+
+            labeledField("Default Project Path") {
+                TextField("/Users/you/project", text: defaultProjectPathBinding)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            labeledField("Default Agent Command") {
+                TextField("claude", text: defaultAgentCommandBinding)
+                    .textFieldStyle(.roundedBorder)
+            }
+        }
+    }
+
+    private var environmentSection: some View {
+        settingsCard {
+            HStack {
+                Text("Environment Check")
                     .font(.headline)
-
-                Text("Local Tasks keeps the inbox inside Looper. Tasks are persisted on this Mac and status updates stay local.")
-                    .foregroundStyle(.secondary)
-
-                welcomeBullet(
-                    title: "No external credentials",
-                    detail: "You can finish setup without connecting any third-party system."
-                )
-                welcomeBullet(
-                    title: "Best for solo workflows",
-                    detail: "Use it when you want a private queue or need the app to work offline."
-                )
-
+                Spacer()
                 Button {
-                    store.send(.inspectTaskProviderButtonTapped)
+                    store.send(.runEnvironmentCheckButtonTapped)
                 } label: {
-                    if store.isInspectingTaskProvider {
+                    if store.isCheckingEnvironment {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Label("Inspect Local Tasks", systemImage: "tray.full")
+                        Label("Check Environment", systemImage: "checklist")
                     }
                 }
-                .buttonStyle(.bordered)
-                .disabled(store.isInspectingTaskProvider)
-            }
-        }
-    }
-
-    private var environmentStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            setupCard {
-                Text("Local Defaults")
-                    .font(.headline)
-
-                labeledField("Default Project Path") {
-                    TextField("/Users/you/project", text: defaultProjectPathBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                labeledField("Default Agent Command") {
-                    TextField("claude", text: defaultAgentCommandBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
+                .buttonStyle(.borderedProminent)
+                .disabled(store.isCheckingEnvironment)
             }
 
-            setupCard {
-                HStack {
-                    Text("Environment Check")
-                        .font(.headline)
-                    Spacer()
-                    Button {
-                        store.send(.runEnvironmentCheckButtonTapped)
-                    } label: {
-                        if store.isCheckingEnvironment {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Label("Check Environment", systemImage: "checklist")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(store.isCheckingEnvironment)
-                }
+            Text("Git and Claude CLI should be installed. tmux is optional, but recommended for stable terminal re-attach behavior.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
 
-                Text("Claude CLI and Git should be installed. tmux is optional but recommended for stable re-attach behavior.")
+            if let report = store.environmentReport {
+                toolStatusRow(report.git)
+                toolStatusRow(report.claude)
+                toolStatusRow(report.tmux)
+            } else {
+                Text("Run the environment check to verify the machine before starting work.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-
-                if let report = store.environmentReport {
-                    toolStatusRow(report.git)
-                    toolStatusRow(report.claude)
-                    toolStatusRow(report.tmux)
-                } else {
-                    Text("Run the environment check to verify the machine before starting the first task.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    private var finishStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            setupCard {
-                Text("Ready To Start")
-                    .font(.headline)
-
-                welcomeBullet(
-                    title: "\(selectedProviderKind.label) ready",
-                    detail: providerReadyDetail
-                )
-                welcomeBullet(
-                    title: "Local environment verified",
-                    detail: store.environmentReport?.isReady == true
-                        ? "Git and Claude CLI are ready on this machine."
-                        : "Run the environment check if you want to verify this machine again."
-                )
-                welcomeBullet(
-                    title: "After finishing",
-                    detail: finishStepDetail
-                )
             }
         }
     }
 
     private var footer: some View {
         HStack {
-            if store.setupStep != .welcome {
-                Button("Back") {
-                    store.send(.backSetupStepButtonTapped)
-                }
-                .buttonStyle(.bordered)
+            Button("Close") {
+                store.send(.dismissSettingsButtonTapped)
             }
+            .buttonStyle(.bordered)
 
             Spacer()
 
-            if store.setupStep == .finish {
-                Button {
-                    store.send(.finishSetupButtonTapped)
-                } label: {
-                    if store.isFinishingSetup || store.pipeline.isSavingPreferences {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Text("Finish Setup")
-                    }
+            Button {
+                store.send(.saveSettingsButtonTapped)
+            } label: {
+                if store.isSavingSettings || store.pipeline.isSavingPreferences {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text("Save Settings")
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canFinish)
-            } else {
-                Button("Continue") {
-                    store.send(.advanceSetupStepButtonTapped)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canAdvance)
             }
+            .buttonStyle(.borderedProminent)
+            .disabled(store.isSavingSettings || store.pipeline.isSavingPreferences)
         }
     }
 
     private var selectedProviderKind: TaskProviderKind {
         store.pipeline.preferences.taskProviderConfiguration.kind
-    }
-
-    private var stepSubtitle: String {
-        switch store.setupStep {
-        case .welcome:
-            "A quick path from first launch to the first running task."
-        case .taskSource:
-            "Choose the task source you want Looper to orchestrate."
-        case .environment:
-            "Verify that the local machine can launch Claude and manage repositories."
-        case .finish:
-            "Persist the setup and return to the inbox ready to run work."
-        }
-    }
-
-    private var canAdvance: Bool {
-        switch store.setupStep {
-        case .welcome:
-            true
-        case .taskSource:
-            selectedProviderKind == .local || store.taskProviderInspection != nil
-        case .environment:
-            store.environmentReport?.isReady == true
-        case .finish:
-            false
-        }
-    }
-
-    private var canFinish: Bool {
-        store.pipeline.preferences.taskProviderConfiguration.canFetchTasks
-            && store.environmentReport?.isReady == true
-    }
-
-    private var providerReadyDetail: String {
-        switch selectedProviderKind {
-        case .local:
-            return store.taskProviderInspection == nil
-                ? "Local Tasks is selected as the inbox source for this Mac."
-                : "Looper found \(store.taskProviderInspection?.previewTaskCount ?? 0) local tasks on this Mac."
-        case .feishu:
-            return store.taskProviderInspection == nil
-                ? "The current Feishu configuration is saved, even if it was not tested in this session."
-                : "The selected Feishu table responded and field discovery completed."
-        }
-    }
-
-    private var finishStepDetail: String {
-        switch selectedProviderKind {
-        case .local:
-            "Looper will open the inbox ready for you to create and launch local tasks."
-        case .feishu:
-            "Looper will refresh the inbox and return you to the main window ready to launch the first synced task."
-        }
-    }
-
-    private func stepBadgeTitle(_ step: AppFeature.SetupStep) -> String {
-        if step.rawValue < store.setupStep.rawValue {
-            return "Done"
-        }
-        if step == store.setupStep {
-            return "Current"
-        }
-        return "Next"
     }
 
     private func providerInspectionSummary(_ inspection: TaskProviderInspection) -> String {
@@ -509,7 +354,7 @@ struct SetupWizardView: View {
     }
 
     @ViewBuilder
-    private func setupCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 14, content: content)
             .padding(18)
             .background(.regularMaterial, in: .rect(cornerRadius: 24))
@@ -525,7 +370,7 @@ struct SetupWizardView: View {
         }
     }
 
-    private func welcomeBullet(title: String, detail: String) -> some View {
+    private func settingsBullet(title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Circle()
                 .fill(Color.accentColor.opacity(0.18))

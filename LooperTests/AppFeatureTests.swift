@@ -41,7 +41,7 @@ final class AppFeatureTests: XCTestCase {
         XCTAssertNil(store.state.pipeline.selectedPipelineID)
     }
 
-    func testOnAppearShowsSetupWizardWhenSetupIncomplete() async {
+    func testOnAppearShowsSettingsWhenSetupIncomplete() async {
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
         } withDependencies: {
@@ -57,8 +57,7 @@ final class AppFeatureTests: XCTestCase {
         await store.send(.onAppear)
         await store.receive(\.pipeline.onAppear)
         await store.receive(\.pipeline.bootstrapResponse.success) {
-            $0.isSetupWizardPresented = true
-            $0.setupStep = .welcome
+            $0.isSettingsPresented = true
         }
         await store.receive(\.loadRuns)
         await store.receive(\.runResponse.success)
@@ -186,7 +185,9 @@ final class AppFeatureTests: XCTestCase {
             $0.date.now = startedAt
         }
 
-        await store.send(.startSelectedTaskButtonTapped)
+        await store.send(.startSelectedTaskButtonTapped) {
+            $0.pendingRunTaskID = task.id
+        }
         await store.receive(\.pipeline.createPipelineFromDefaults) {
             $0.pipeline.composer = PipelineDraft(
                 name: "",
@@ -201,6 +202,7 @@ final class AppFeatureTests: XCTestCase {
             $0.pipeline.selectedPipelineID = pipeline.id
             $0.runs = [run]
             $0.updatingTaskIDs = [task.id]
+            $0.pendingRunTaskID = nil
             $0.pipeline.preferences = AppPreferences(
                 defaultProjectPath: "/tmp/demo",
                 defaultAgentCommand: "claude",
@@ -281,10 +283,6 @@ final class AppFeatureTests: XCTestCase {
         }
         await store.receive(\.taskResponse.success) {
             $0.isLoadingTasks = false
-        }
-        await store.receive(\.pipeline.selectPipeline) {
-            $0.pipeline.selectedPipelineID = nil
-            $0.pipeline.preferences.lastSelectedPipelineID = nil
         }
     }
 
@@ -375,6 +373,54 @@ final class AppFeatureTests: XCTestCase {
 
         let savedPreferences = await recorder.value()
         XCTAssertEqual(savedPreferences?.lastSelectedPipelineID, secondID)
+    }
+
+    func testSelectingPipelineSelectsMatchingTask() async {
+        let pipelineID = UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!
+        let pipeline = Pipeline(
+            id: pipelineID,
+            name: "Repo",
+            projectPath: "/tmp/repo",
+            executionPath: "/tmp/repo",
+            agentCommand: "claude",
+            tmuxSessionName: "repo"
+        )
+        let matchingTask = LooperTask(
+            id: "task-1",
+            title: "Match",
+            summary: "Summary",
+            status: .pending,
+            source: "Local",
+            repoPath: URL(filePath: "/tmp/repo")
+        )
+        let otherTask = LooperTask(
+            id: "task-2",
+            title: "Other",
+            summary: "Summary",
+            status: .pending,
+            source: "Local",
+            repoPath: URL(filePath: "/tmp/other")
+        )
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [matchingTask, otherTask],
+                pipeline: PipelineFeature.State(
+                    pipelines: [pipeline]
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.appPreferencesClient.savePreferences = { _ in }
+            $0.pipelineTerminalClient.focusSession = { _ in }
+        }
+
+        await store.send(.pipeline(.selectPipeline(pipelineID))) {
+            $0.selectedTaskID = matchingTask.id
+            $0.pipeline.selectedPipelineID = pipelineID
+            $0.pipeline.preferences.lastSelectedPipelineID = pipelineID
+        }
     }
 
     func testQuickSwitchSelectsNextPipeline() async {
@@ -495,6 +541,95 @@ final class AppFeatureTests: XCTestCase {
         XCTAssertEqual(capturedRequest?.name, "demo")
     }
 
+    func testNewPipelineButtonDoesNotStartSelectedTask() async {
+        let task = LooperTask(
+            id: "task-1",
+            title: "Inbox Task",
+            summary: "Summary",
+            status: .pending,
+            source: "Local",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let pipeline = Pipeline(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
+            agentCommand: "claude --resume",
+            tmuxSessionName: "demo"
+        )
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                selectedTaskID: task.id,
+                pipeline: PipelineFeature.State(
+                    preferences: AppPreferences(
+                        defaultProjectPath: "",
+                        defaultAgentCommand: "claude --resume",
+                        hasCompletedOnboarding: true
+                    )
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.projectDirectoryPickerClient.pickDirectory = { "/tmp/demo" }
+            $0.pipelineManagerClient.createPipeline = { _ in pipeline }
+            $0.pipelineStoreClient.savePipeline = { _ in }
+            $0.appPreferencesClient.savePreferences = { _ in }
+            $0.pipelineTerminalClient.upsertSession = { _ in }
+            $0.pipelineTerminalClient.focusSession = { _ in }
+            $0.pipelineTerminalClient.bootstrapSession = { _ in }
+        }
+
+        await store.send(.newPipelineButtonTapped)
+        await store.receive(\.pipeline.openProjectButtonTapped)
+        await store.receive(\.pipeline.openProjectResponse)
+        await store.receive(\.pipeline.createPipelineFromDefaults) {
+            $0.pipeline.composer = PipelineDraft(
+                name: "",
+                projectPath: "/tmp/demo",
+                agentCommand: "claude --resume"
+            )
+            $0.pipeline.isCreatingPipeline = true
+        }
+        await store.receive(\.pipeline.createPipelineResponse.success) {
+            $0.pipeline.isCreatingPipeline = false
+            $0.pipeline.pipelines = [pipeline]
+            $0.pipeline.selectedPipelineID = pipeline.id
+            $0.pipeline.preferences = AppPreferences(
+                defaultProjectPath: "/tmp/demo",
+                defaultAgentCommand: "claude --resume",
+                lastSelectedPipelineID: pipeline.id,
+                hasCompletedOnboarding: true
+            )
+            $0.selectedTaskID = task.id
+        }
+
+        XCTAssertTrue(store.state.runs.isEmpty)
+        XCTAssertEqual(store.state.tasks[id: task.id]?.status, .pending)
+    }
+
+    func testOpenLocalTaskComposerRequiresSelectedPipeline() async {
+        let store = TestStore(
+            initialState: AppFeature.State(
+                pipeline: PipelineFeature.State(
+                    preferences: AppPreferences(
+                        taskProviderConfiguration: TaskProviderConfiguration(kind: .local),
+                        hasCompletedOnboarding: true
+                    )
+                )
+            )
+        ) {
+            AppFeature()
+        }
+
+        await store.send(.openLocalTaskComposerButtonTapped) {
+            $0.taskProviderErrorMessage = "Create or select a pipeline before adding a local task."
+        }
+    }
+
     func testSavingPreferencesPersistsDefaults() async {
         let recorder = PreferencesRecorder()
         let preferences = AppPreferences(
@@ -528,14 +663,13 @@ final class AppFeatureTests: XCTestCase {
         await store.receive(\.taskResponse.success) {
             $0.isLoadingTasks = false
         }
-        await store.receive(\.pipeline.selectPipeline)
 
         let savedPreferences = await recorder.value()
         XCTAssertEqual(savedPreferences?.defaultProjectPath, preferences.defaultProjectPath)
         XCTAssertEqual(savedPreferences?.defaultAgentCommand, preferences.defaultAgentCommand)
     }
 
-    func testFinishSetupPersistsPreferencesAndDismissesWizard() async {
+    func testSaveSettingsPersistsPreferencesAndDismissesSheet() async {
         let recorder = PreferencesRecorder()
         let configuration = FeishuTaskProviderConfiguration(
             appID: "cli_xxx",
@@ -544,17 +678,10 @@ final class AppFeatureTests: XCTestCase {
             tableID: "tbl_tasks"
         )
         let providerConfiguration = TaskProviderConfiguration(kind: .feishu, feishu: configuration)
-        let environment = EnvironmentSetupReport(
-            git: .init(name: "Git", command: "git", isInstalled: true, resolvedPath: "/usr/bin/git"),
-            claude: .init(name: "Claude CLI", command: "claude", isInstalled: true, resolvedPath: "/opt/homebrew/bin/claude"),
-            tmux: .init(name: "tmux", command: "tmux", isInstalled: false, resolvedPath: nil)
-        )
 
         let store = TestStore(
             initialState: AppFeature.State(
-                isSetupWizardPresented: true,
-                setupStep: .finish,
-                environmentReport: environment,
+                isSettingsPresented: true,
                 pipeline: PipelineFeature.State(
                     preferences: AppPreferences(
                         taskProviderConfiguration: providerConfiguration
@@ -568,17 +695,16 @@ final class AppFeatureTests: XCTestCase {
             $0.taskProviderClient.fetchTasks = { _ in [] }
         }
 
-        await store.send(.finishSetupButtonTapped) {
+        await store.send(.saveSettingsButtonTapped) {
             $0.pipeline.preferences.hasCompletedOnboarding = true
-            $0.isFinishingSetup = true
+            $0.isSavingSettings = true
         }
         await store.receive(\.pipeline.savePreferencesButtonTapped) {
             $0.pipeline.isSavingPreferences = true
         }
         await store.receive(\.pipeline.savePreferencesFinished) {
-            $0.isFinishingSetup = false
-            $0.isSetupWizardPresented = false
-            $0.setupStep = .finish
+            $0.isSavingSettings = false
+            $0.isSettingsPresented = false
             $0.pipeline.isSavingPreferences = false
         }
         await store.receive(\.refreshTasksButtonTapped) {
@@ -587,7 +713,6 @@ final class AppFeatureTests: XCTestCase {
         await store.receive(\.taskResponse.success) {
             $0.isLoadingTasks = false
         }
-        await store.receive(\.pipeline.selectPipeline)
 
         let savedPreferences = await recorder.value()
         XCTAssertEqual(savedPreferences?.hasCompletedOnboarding, true)

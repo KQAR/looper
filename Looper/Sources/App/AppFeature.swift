@@ -10,26 +10,6 @@ struct AppFeature {
     @Dependency(\.pipelineTerminalClient) var pipelineTerminalClient
     @Dependency(\.uuid) var uuid
 
-    enum SetupStep: Int, CaseIterable, Equatable, Sendable {
-        case welcome
-        case taskSource
-        case environment
-        case finish
-
-        var title: String {
-            switch self {
-            case .welcome:
-                "Welcome"
-            case .taskSource:
-                "Choose Task Source"
-            case .environment:
-                "Check Environment"
-            case .finish:
-                "Run First Task"
-            }
-        }
-    }
-
     struct TaskStatusUpdate: Equatable, Sendable {
         var taskID: LooperTask.ID
         var status: LooperTask.Status
@@ -57,37 +37,36 @@ struct AppFeature {
         var tasks: IdentifiedArrayOf<LooperTask> = []
         var runs: IdentifiedArrayOf<Run> = []
         var selectedTaskID: LooperTask.ID?
+        var pendingRunTaskID: LooperTask.ID?
         var isLoadingTasks = false
         var updatingTaskIDs: Set<LooperTask.ID> = []
         var taskProviderErrorMessage: String?
-        var isSetupWizardPresented = false
-        var setupStep: SetupStep = .welcome
+        var isSettingsPresented = false
         var isInspectingTaskProvider = false
         var taskProviderInspection: TaskProviderInspection?
         var isCheckingEnvironment = false
         var environmentReport: EnvironmentSetupReport?
-        var isFinishingSetup = false
+        var isSavingSettings = false
         var isLocalTaskComposerPresented = false
         var isCreatingLocalTask = false
         var pipeline = PipelineFeature.State()
     }
 
     enum Action {
-        case advanceSetupStepButtonTapped
-        case backSetupStepButtonTapped
         case dismissTaskProviderError
+        case dismissSettingsButtonTapped
         case dismissLocalTaskComposerButtonTapped
-        case dismissSetupWizardButtonTapped
         case environmentCheckResponse(EnvironmentSetupReport)
-        case finishSetupButtonTapped
         case createLocalTaskButtonTapped(LocalTaskDraft)
         case localTaskCreateResponse(Result<LooperTask, TaskProviderFailure>)
         case markSelectedTaskDoneButtonTapped
+        case newPipelineButtonTapped
         case markSelectedTaskFailedButtonTapped
         case onAppear
         case openLocalTaskComposerButtonTapped
-        case openSetupButtonTapped
+        case openSettingsButtonTapped
         case loadRuns
+        case saveSettingsButtonTapped
         case selectTaskProvider(TaskProviderKind)
         case refreshTasksButtonTapped
         case runPersistenceFailed(RunFailure)
@@ -121,10 +100,13 @@ struct AppFeature {
                     }
                 )
 
-            case .openSetupButtonTapped:
-                state.isSetupWizardPresented = true
-                state.setupStep = state.pipeline.preferences.hasCompletedOnboarding ? .taskSource : .welcome
+            case .openSettingsButtonTapped:
+                state.isSettingsPresented = true
                 return .none
+
+            case .newPipelineButtonTapped:
+                state.pendingRunTaskID = nil
+                return .send(.pipeline(.openProjectButtonTapped))
 
             case let .selectTaskProvider(kind):
                 state.pipeline.preferences.taskProviderConfiguration.kind = kind
@@ -136,6 +118,10 @@ struct AppFeature {
                 guard state.pipeline.preferences.taskProviderConfiguration.kind == .local else {
                     return .none
                 }
+                guard state.pipeline.selectedPipelineID != nil else {
+                    state.taskProviderErrorMessage = "Create or select a pipeline before adding a local task."
+                    return .none
+                }
                 state.isLocalTaskComposerPresented = true
                 return .none
 
@@ -144,20 +130,10 @@ struct AppFeature {
                 state.isCreatingLocalTask = false
                 return .none
 
-            case .dismissSetupWizardButtonTapped:
-                state.isSetupWizardPresented = false
+            case .dismissSettingsButtonTapped:
+                state.isSettingsPresented = false
                 state.isInspectingTaskProvider = false
                 state.isCheckingEnvironment = false
-                return .none
-
-            case .advanceSetupStepButtonTapped:
-                guard let nextStep = nextSetupStep(after: state.setupStep) else { return .none }
-                state.setupStep = nextStep
-                return .none
-
-            case .backSetupStepButtonTapped:
-                guard let previousStep = previousSetupStep(before: state.setupStep) else { return .none }
-                state.setupStep = previousStep
                 return .none
 
             case .runEnvironmentCheckButtonTapped:
@@ -274,6 +250,8 @@ struct AppFeature {
 
                 if let matchingTaskID = taskIDMatchingSelectedPipeline(state: state) {
                     state.selectedTaskID = matchingTaskID
+                } else if state.pipeline.selectedPipelineID != nil {
+                    state.selectedTaskID = nil
                 } else {
                     state.selectedTaskID = state.tasks.ids.first
                 }
@@ -376,6 +354,7 @@ struct AppFeature {
                     return .none
                 }
 
+                state.pendingRunTaskID = task.id
                 return .send(.pipeline(.createPipelineFromDefaults(repoPath)))
 
             case .markSelectedTaskDoneButtonTapped:
@@ -429,7 +408,14 @@ struct AppFeature {
                 )
 
             case let .pipeline(.createPipelineResponse(.success(pipeline))):
-                if let taskID = taskID(matching: pipeline, in: state.tasks) {
+                defer { state.pendingRunTaskID = nil }
+
+                let pendingRunTaskID = state.pendingRunTaskID
+                let matchingTaskID = taskID(matching: pipeline, in: state.tasks)
+
+                if let pendingRunTaskID {
+                    state.selectedTaskID = pendingRunTaskID
+                    let taskID = pendingRunTaskID
                     state.selectedTaskID = taskID
                     let runEffect = beginRun(
                         pipelineID: pipeline.id,
@@ -456,18 +442,19 @@ struct AppFeature {
 
                     return runEffect
                 }
+
+                state.selectedTaskID = matchingTaskID
                 return .none
 
             case let .pipeline(.bootstrapResponse(.success(payload))):
                 if state.selectedTaskID == nil {
-                    state.selectedTaskID = taskIDMatchingSelectedPipeline(state: state) ?? state.tasks.ids.first
+                    state.selectedTaskID = taskIDMatchingSelectedPipeline(state: state)
                 }
 
                 let loadRunsEffect: Effect<Action> = .send(.loadRuns)
 
                 if !payload.preferences.hasCompletedOnboarding {
-                    state.isSetupWizardPresented = true
-                    state.setupStep = .welcome
+                    state.isSettingsPresented = true
                     return loadRunsEffect
                 }
 
@@ -481,10 +468,9 @@ struct AppFeature {
                 )
 
             case .pipeline(.savePreferencesFinished):
-                if state.isFinishingSetup {
-                    state.isFinishingSetup = false
-                    state.isSetupWizardPresented = false
-                    state.setupStep = .finish
+                if state.isSavingSettings {
+                    state.isSavingSettings = false
+                    state.isSettingsPresented = false
                 }
 
                 guard state.pipeline.preferences.taskProviderConfiguration.canFetchTasks else {
@@ -493,18 +479,9 @@ struct AppFeature {
 
                 return .send(.refreshTasksButtonTapped)
 
-            case .finishSetupButtonTapped:
-                guard state.pipeline.preferences.taskProviderConfiguration.canFetchTasks else {
-                    state.taskProviderErrorMessage = "Complete the selected task provider setup before finishing."
-                    return .none
-                }
-                guard state.environmentReport?.isReady == true else {
-                    state.taskProviderErrorMessage = "Install Git and Claude CLI before finishing setup."
-                    return .none
-                }
-
+            case .saveSettingsButtonTapped:
                 state.pipeline.preferences.hasCompletedOnboarding = true
-                state.isFinishingSetup = true
+                state.isSavingSettings = true
                 return .send(.pipeline(.savePreferencesButtonTapped))
 
             case let .taskStatusUpdateResponse(.success(update)):
@@ -555,6 +532,29 @@ struct AppFeature {
                 state.taskProviderErrorMessage = nil
                 return .none
 
+            case let .pipeline(.selectPipeline(id)):
+                guard let id else {
+                    state.selectedTaskID = nil
+                    return .none
+                }
+
+                if let selectedTask = selectedTask(state: state),
+                   pipelineID(for: selectedTask, in: state.pipeline.pipelines) == id
+                {
+                    return .none
+                }
+
+                state.selectedTaskID = taskID(matchingPipelineID: id, state: state)
+                return .none
+
+            case .pipeline(.removePipelineResponse(_, .success)):
+                state.selectedTaskID = taskIDMatchingSelectedPipeline(state: state)
+                return .none
+
+            case .pipeline(.createPipelineResponse(.failure)):
+                state.pendingRunTaskID = nil
+                return .none
+
             case .pipeline:
                 return .none
 
@@ -586,12 +586,15 @@ private func selectedPipeline(state: AppFeature.State) -> Pipeline? {
 
 private func syncPipelineSelection(state: inout AppFeature.State) -> Effect<AppFeature.Action> {
     guard let task = selectedTask(state: state) else {
-        return .send(.pipeline(.selectPipeline(nil)))
+        return .none
     }
 
     guard let pipelineID = pipelineID(for: task, in: state.pipeline.pipelines) else {
+        guard state.pipeline.selectedPipelineID != nil else {
+            return .none
+        }
         state.pipeline.selectedPipelineID = nil
-        return .none
+        return .send(.pipeline(.selectPipeline(nil)))
     }
 
     state.pipeline.selectedPipelineID = pipelineID
@@ -626,6 +629,17 @@ private func taskIDMatchingSelectedPipeline(state: AppFeature.State) -> LooperTa
     guard let pipelineID = state.pipeline.selectedPipelineID,
           let pipeline = state.pipeline.pipelines[id: pipelineID]
     else {
+        return nil
+    }
+
+    return taskID(matching: pipeline, in: state.tasks)
+}
+
+private func taskID(
+    matchingPipelineID pipelineID: UUID,
+    state: AppFeature.State
+) -> LooperTask.ID? {
+    guard let pipeline = state.pipeline.pipelines[id: pipelineID] else {
         return nil
     }
 
@@ -789,14 +803,6 @@ private func writeTaskStatus(
             )
         }
     }
-}
-
-private func nextSetupStep(after step: AppFeature.SetupStep) -> AppFeature.SetupStep? {
-    AppFeature.SetupStep(rawValue: step.rawValue + 1)
-}
-
-private func previousSetupStep(before step: AppFeature.SetupStep) -> AppFeature.SetupStep? {
-    AppFeature.SetupStep(rawValue: step.rawValue - 1)
 }
 
 private func autofillFeishuMappings(
