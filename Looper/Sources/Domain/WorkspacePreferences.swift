@@ -5,6 +5,7 @@ struct WorkspacePreferences: Equatable, Sendable {
     var defaultAgentCommand: String = "claude"
     var lastSelectedWorkspaceID: UUID?
     var taskBoardConfiguration: TaskBoardConfiguration = .init()
+    var hasCompletedOnboarding = false
 
     var draft: WorkspaceDraft {
         WorkspaceDraft(
@@ -16,12 +17,15 @@ struct WorkspacePreferences: Equatable, Sendable {
 
     static func from(
         workspace: CodingWorkspace,
-        selectedWorkspaceID: UUID?
+        selectedWorkspaceID: UUID?,
+        base: WorkspacePreferences? = nil
     ) -> Self {
         Self(
             defaultRepositoryPath: workspace.repositoryRootPath,
             defaultAgentCommand: workspace.agentCommand,
-            lastSelectedWorkspaceID: selectedWorkspaceID
+            lastSelectedWorkspaceID: selectedWorkspaceID,
+            taskBoardConfiguration: base?.taskBoardConfiguration ?? .init(),
+            hasCompletedOnboarding: base?.hasCompletedOnboarding ?? false
         )
     }
 }

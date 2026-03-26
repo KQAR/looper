@@ -158,14 +158,16 @@ struct WorkspaceFeature {
                 state.selectedWorkspaceID = workspace.id
                 state.preferences = .from(
                     workspace: workspace,
-                    selectedWorkspaceID: workspace.id
+                    selectedWorkspaceID: workspace.id,
+                    base: state.preferences
                 )
+                let preferences = state.preferences
 
                 return .run { send in
                     do {
                         try await workspaceStoreClient.saveWorkspace(workspace)
                         await workspacePreferencesClient.savePreferences(
-                            .from(workspace: workspace, selectedWorkspaceID: workspace.id)
+                            preferences
                         )
                         await terminalWorkspaceClient.upsertSession(workspace)
                         await terminalWorkspaceClient.focusSession(workspace.id)

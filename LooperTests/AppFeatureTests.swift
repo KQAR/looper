@@ -40,6 +40,27 @@ final class AppFeatureTests: XCTestCase {
         XCTAssertNil(store.state.workspace.selectedWorkspaceID)
     }
 
+    func testOnAppearShowsSetupWizardWhenSetupIncomplete() async {
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.workspaceStoreClient.fetchWorkspaces = { [] }
+            $0.workspacePreferencesClient.fetchPreferences = { .init() }
+            $0.terminalWorkspaceClient.events = {
+                AsyncStream { continuation in
+                    continuation.finish()
+                }
+            }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.workspace.onAppear)
+        await store.receive(\.workspace.bootstrapResponse.success) {
+            $0.isSetupWizardPresented = true
+            $0.setupStep = .welcome
+        }
+    }
+
     func testOnAppearLoadsTasksAndSelectsFirstTask() async {
         let firstTask = LooperTask(
             id: "task-1",
@@ -70,7 +91,10 @@ final class AppFeatureTests: XCTestCase {
             $0.taskBoardClient.fetchTasks = { _ in [firstTask, secondTask] }
             $0.workspaceStoreClient.fetchWorkspaces = { [] }
             $0.workspacePreferencesClient.fetchPreferences = {
-                WorkspacePreferences(taskBoardConfiguration: configuration)
+                WorkspacePreferences(
+                    taskBoardConfiguration: configuration,
+                    hasCompletedOnboarding: true
+                )
             }
             $0.terminalWorkspaceClient.events = {
                 AsyncStream { continuation in
@@ -82,8 +106,14 @@ final class AppFeatureTests: XCTestCase {
         await store.send(.onAppear)
         await store.receive(\.workspace.onAppear)
         await store.receive(\.workspace.bootstrapResponse.success) {
-            $0.workspace.preferences = WorkspacePreferences(taskBoardConfiguration: configuration)
-            $0.workspace.composer = WorkspacePreferences(taskBoardConfiguration: configuration).draft
+            $0.workspace.preferences = WorkspacePreferences(
+                taskBoardConfiguration: configuration,
+                hasCompletedOnboarding: true
+            )
+            $0.workspace.composer = WorkspacePreferences(
+                taskBoardConfiguration: configuration,
+                hasCompletedOnboarding: true
+            ).draft
         }
         await store.receive(\.refreshTasksButtonTapped) {
             $0.isLoadingTasks = true
@@ -173,7 +203,8 @@ final class AppFeatureTests: XCTestCase {
                 WorkspacePreferences(
                     defaultRepositoryPath: "/tmp/repo",
                     defaultAgentCommand: "claude --dangerously-skip-permissions",
-                    lastSelectedWorkspaceID: workspace.id
+                    lastSelectedWorkspaceID: workspace.id,
+                    hasCompletedOnboarding: true
                 )
             }
             $0.terminalWorkspaceClient.upsertSession = { _ in }
@@ -186,12 +217,14 @@ final class AppFeatureTests: XCTestCase {
             $0.workspace.preferences = WorkspacePreferences(
                 defaultRepositoryPath: "/tmp/repo",
                 defaultAgentCommand: "claude --dangerously-skip-permissions",
-                lastSelectedWorkspaceID: workspace.id
+                lastSelectedWorkspaceID: workspace.id,
+                hasCompletedOnboarding: true
             )
             $0.workspace.composer = WorkspacePreferences(
                 defaultRepositoryPath: "/tmp/repo",
                 defaultAgentCommand: "claude --dangerously-skip-permissions",
-                lastSelectedWorkspaceID: workspace.id
+                lastSelectedWorkspaceID: workspace.id,
+                hasCompletedOnboarding: true
             ).draft
         }
     }
@@ -321,7 +354,8 @@ final class AppFeatureTests: XCTestCase {
                 WorkspacePreferences(
                     defaultRepositoryPath: "/tmp",
                     defaultAgentCommand: "claude",
-                    lastSelectedWorkspaceID: second.id
+                    lastSelectedWorkspaceID: second.id,
+                    hasCompletedOnboarding: true
                 )
             }
             $0.terminalWorkspaceClient.upsertSession = { _ in }
@@ -334,12 +368,14 @@ final class AppFeatureTests: XCTestCase {
             $0.workspace.preferences = WorkspacePreferences(
                 defaultRepositoryPath: "/tmp",
                 defaultAgentCommand: "claude",
-                lastSelectedWorkspaceID: second.id
+                lastSelectedWorkspaceID: second.id,
+                hasCompletedOnboarding: true
             )
             $0.workspace.composer = WorkspacePreferences(
                 defaultRepositoryPath: "/tmp",
                 defaultAgentCommand: "claude",
-                lastSelectedWorkspaceID: second.id
+                lastSelectedWorkspaceID: second.id,
+                hasCompletedOnboarding: true
             ).draft
         }
     }
@@ -498,6 +534,64 @@ final class AppFeatureTests: XCTestCase {
         let savedPreferences = await recorder.value()
         XCTAssertEqual(savedPreferences?.defaultRepositoryPath, preferences.defaultRepositoryPath)
         XCTAssertEqual(savedPreferences?.defaultAgentCommand, preferences.defaultAgentCommand)
+    }
+
+    func testFinishSetupPersistsPreferencesAndDismissesWizard() async {
+        let recorder = PreferencesRecorder()
+        let configuration = TaskBoardConfiguration(
+            appID: "cli_xxx",
+            appSecret: "secret",
+            appToken: "app_token",
+            tableID: "tbl_tasks"
+        )
+        let environment = EnvironmentSetupReport(
+            git: .init(name: "Git", command: "git", isInstalled: true, resolvedPath: "/usr/bin/git"),
+            claude: .init(name: "Claude CLI", command: "claude", isInstalled: true, resolvedPath: "/opt/homebrew/bin/claude"),
+            tmux: .init(name: "tmux", command: "tmux", isInstalled: false, resolvedPath: nil)
+        )
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                isSetupWizardPresented: true,
+                setupStep: .finish,
+                environmentReport: environment,
+                workspace: WorkspaceFeature.State(
+                    preferences: WorkspacePreferences(
+                        taskBoardConfiguration: configuration
+                    )
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.workspacePreferencesClient.savePreferences = { await recorder.record($0) }
+            $0.taskBoardClient.fetchTasks = { _ in [] }
+        }
+
+        await store.send(.finishSetupButtonTapped) {
+            $0.workspace.preferences.hasCompletedOnboarding = true
+            $0.isFinishingSetup = true
+        }
+        await store.receive(\.workspace.savePreferencesButtonTapped) {
+            $0.workspace.isSavingPreferences = true
+        }
+        await store.receive(\.workspace.savePreferencesFinished) {
+            $0.isFinishingSetup = false
+            $0.isSetupWizardPresented = false
+            $0.setupStep = .finish
+            $0.workspace.isSavingPreferences = false
+        }
+        await store.receive(\.refreshTasksButtonTapped) {
+            $0.isLoadingTasks = true
+        }
+        await store.receive(\.taskResponse.success) {
+            $0.isLoadingTasks = false
+        }
+        await store.receive(\.workspace.selectWorkspace)
+
+        let savedPreferences = await recorder.value()
+        XCTAssertEqual(savedPreferences?.hasCompletedOnboarding, true)
+        XCTAssertEqual(savedPreferences?.taskBoardConfiguration.appID, configuration.appID)
     }
 
     func testMarkSelectedTaskDoneWritesBackStatus() async {

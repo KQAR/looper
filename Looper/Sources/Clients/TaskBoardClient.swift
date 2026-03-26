@@ -4,6 +4,9 @@ import Foundation
 @DependencyClient
 struct TaskBoardClient {
     var fetchTasks: @Sendable (TaskBoardConfiguration) async throws -> [LooperTask] = { _ in [] }
+    var inspectConfiguration: @Sendable (TaskBoardConfiguration) async throws -> TaskBoardInspection = { _ in
+        .init(previewTaskCount: 0, discoveredFieldNames: [], detectedStatusValues: [], sampleTaskTitles: [])
+    }
     var updateTaskStatus: @Sendable (LooperTask.ID, LooperTask.Status, TaskBoardConfiguration) async throws -> Void = { _, _, _ in }
 }
 
@@ -18,6 +21,9 @@ extension TaskBoardClient: DependencyKey {
     static let liveValue = Self(
         fetchTasks: { configuration in
             try await FeishuTaskBoardAPI.fetchTasks(configuration: configuration)
+        },
+        inspectConfiguration: { configuration in
+            try await FeishuTaskBoardAPI.inspectConfiguration(configuration: configuration)
         },
         updateTaskStatus: { taskID, status, configuration in
             try await FeishuTaskBoardAPI.updateTaskStatus(
@@ -60,6 +66,40 @@ private enum FeishuTaskBoardAPI {
         } while pageToken != nil
 
         return records.map { task(from: $0, configuration: configuration) }
+    }
+
+    static func inspectConfiguration(configuration: TaskBoardConfiguration) async throws -> TaskBoardInspection {
+        guard configuration.minimumConnectionFieldsArePresent else {
+            throw TaskBoardFailure(description: "App ID, app secret, app token, and table ID are required.")
+        }
+
+        let accessToken = try await tenantAccessToken(configuration: configuration)
+        let page = try await fetchRecordPage(
+            configuration: configuration,
+            accessToken: accessToken,
+            pageToken: nil
+        )
+
+        let fieldNames = Array(
+            Set(page.items.flatMap { Array($0.fields.keys) })
+        ).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        let statusValues = Array(
+            Set(
+                page.items.compactMap {
+                    $0.fields[configuration.statusFieldName]?.textValue?.trimmed
+                }
+            )
+        ).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        let sampleTitles = page.items.prefix(3).compactMap {
+            $0.fields[configuration.titleFieldName]?.textValue?.trimmed
+        }
+
+        return TaskBoardInspection(
+            previewTaskCount: page.items.count,
+            discoveredFieldNames: fieldNames,
+            detectedStatusValues: statusValues,
+            sampleTaskTitles: sampleTitles
+        )
     }
 
     static func updateTaskStatus(

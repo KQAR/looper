@@ -19,6 +19,11 @@ struct TaskBoardConfiguration: Equatable, Codable, Sendable {
             .allSatisfy { !$0.trimmed.isEmpty }
     }
 
+    var minimumConnectionFieldsArePresent: Bool {
+        [appID, appSecret, appToken, tableID]
+            .allSatisfy { !$0.trimmed.isEmpty }
+    }
+
     func remoteValue(for status: LooperTask.Status) -> String {
         switch status {
         case .pending:

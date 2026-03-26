@@ -21,6 +21,7 @@ extension WorkspacePreferencesClient: DependencyKey {
             static let defaultAgentCommand = "workspacePreferences.defaultAgentCommand"
             static let lastSelectedWorkspaceID = "workspacePreferences.lastSelectedWorkspaceID"
             static let taskBoardConfiguration = "workspacePreferences.taskBoardConfiguration"
+            static let hasCompletedOnboarding = "workspacePreferences.hasCompletedOnboarding"
         }
 
         return WorkspacePreferencesClient(
@@ -29,13 +30,17 @@ extension WorkspacePreferencesClient: DependencyKey {
                 let taskBoardConfiguration = defaults.data(forKey: Keys.taskBoardConfiguration)
                     .flatMap { try? JSONDecoder().decode(TaskBoardConfiguration.self, from: $0) }
                     ?? .init()
+                let hasCompletedOnboarding = defaults.object(forKey: Keys.hasCompletedOnboarding)
+                    .flatMap { _ in defaults.bool(forKey: Keys.hasCompletedOnboarding) }
+                    ?? taskBoardConfiguration.isConfigured
 
                 return WorkspacePreferences(
                     defaultRepositoryPath: defaults.string(forKey: Keys.defaultRepositoryPath) ?? "",
                     defaultAgentCommand: defaults.string(forKey: Keys.defaultAgentCommand) ?? "claude",
                     lastSelectedWorkspaceID: defaults.string(forKey: Keys.lastSelectedWorkspaceID)
                         .flatMap(UUID.init(uuidString:)),
-                    taskBoardConfiguration: taskBoardConfiguration
+                    taskBoardConfiguration: taskBoardConfiguration,
+                    hasCompletedOnboarding: hasCompletedOnboarding
                 )
             },
             savePreferences: { preferences in
@@ -49,6 +54,10 @@ extension WorkspacePreferencesClient: DependencyKey {
                 defaults.set(
                     try? JSONEncoder().encode(preferences.taskBoardConfiguration),
                     forKey: Keys.taskBoardConfiguration
+                )
+                defaults.set(
+                    preferences.hasCompletedOnboarding,
+                    forKey: Keys.hasCompletedOnboarding
                 )
             }
         )
