@@ -14,6 +14,7 @@ struct LooperApp: App {
                 AppFeature()
             } withDependencies: {
                 $0.pipelineStoreClient = .live(database: database)
+                $0.runStoreClient = .live(database: database)
             }
         )
     }

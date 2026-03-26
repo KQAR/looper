@@ -18,9 +18,25 @@ actor AppDatabase {
         }
     }
 
+    func fetchRuns() throws -> [Run] {
+        try databaseQueue.read { db in
+            try RunRecord
+                .order(Column("startedAt").desc)
+                .fetchAll(db)
+                .map(\.run)
+        }
+    }
+
     func savePipeline(_ pipeline: Pipeline) throws {
         try databaseQueue.write { db in
             var record = PipelineRecord(pipeline: pipeline)
+            try record.save(db)
+        }
+    }
+
+    func saveRun(_ run: Run) throws {
+        try databaseQueue.write { db in
+            var record = RunRecord(run: run)
             try record.save(db)
         }
     }
@@ -73,6 +89,20 @@ actor AppDatabase {
                 table.column("agentCommand", .text).notNull()
                 table.column("tmuxSessionName", .text).notNull()
                 table.column("createdAt", .datetime).notNull()
+            }
+        }
+
+        migrator.registerMigration("createRuns") { db in
+            try db.create(table: RunRecord.databaseTableName) { table in
+                table.column("id", .text).primaryKey()
+                table.column("pipelineID", .text).notNull().indexed()
+                table.column("taskID", .text).notNull().indexed()
+                table.column("status", .text).notNull()
+                table.column("trigger", .text).notNull()
+                table.column("startedAt", .datetime).notNull().indexed()
+                table.column("finishedAt", .datetime)
+                table.column("exitCode", .integer)
+                table.column("logPath", .text).notNull()
             }
         }
 

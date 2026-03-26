@@ -35,6 +35,7 @@ final class AppFeatureTests: XCTestCase {
         }
 
         XCTAssertTrue(store.state.tasks.isEmpty)
+        XCTAssertTrue(store.state.runs.isEmpty)
         XCTAssertNil(store.state.selectedTaskID)
         XCTAssertTrue(store.state.pipeline.pipelines.isEmpty)
         XCTAssertNil(store.state.pipeline.selectedPipelineID)
@@ -59,6 +60,8 @@ final class AppFeatureTests: XCTestCase {
             $0.isSetupWizardPresented = true
             $0.setupStep = .welcome
         }
+        await store.receive(\.loadRuns)
+        await store.receive(\.runResponse.success)
     }
 
     func testOnAppearLoadsTasksAndSelectsFirstTask() async {
@@ -116,9 +119,11 @@ final class AppFeatureTests: XCTestCase {
                 hasCompletedOnboarding: true
             ).draft
         }
+        await store.receive(\.loadRuns)
         await store.receive(\.refreshTasksButtonTapped) {
             $0.isLoadingTasks = true
         }
+        await store.receive(\.runResponse.success)
         await store.receive(\.taskResponse.success) {
             $0.isLoadingTasks = false
             $0.tasks = [firstTask, secondTask]
@@ -143,6 +148,19 @@ final class AppFeatureTests: XCTestCase {
             agentCommand: "claude",
             tmuxSessionName: "demo"
         )
+        let startedAt = Date(timeIntervalSince1970: 1_234_567_890)
+        let runID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
+        let run = Run(
+            id: runID,
+            pipelineID: pipeline.id,
+            taskID: task.id,
+            status: .running,
+            trigger: .startTask,
+            startedAt: startedAt,
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "\(NSTemporaryDirectory())looper-runs/\(runID.uuidString).log"
+        )
         let recorder = TaskStatusRecorder()
 
         let store = TestStore(
@@ -160,9 +178,12 @@ final class AppFeatureTests: XCTestCase {
             $0.pipelineTerminalClient.upsertSession = { _ in }
             $0.pipelineTerminalClient.focusSession = { _ in }
             $0.pipelineTerminalClient.bootstrapSession = { _ in }
+            $0.runStoreClient.saveRun = { _ in }
             $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
                 await recorder.record(taskID, status)
             }
+            $0.uuid = .constant(runID)
+            $0.date.now = startedAt
         }
 
         await store.send(.startSelectedTaskButtonTapped)
@@ -178,6 +199,7 @@ final class AppFeatureTests: XCTestCase {
             $0.pipeline.isCreatingPipeline = false
             $0.pipeline.pipelines = [pipeline]
             $0.pipeline.selectedPipelineID = pipeline.id
+            $0.runs = [run]
             $0.updatingTaskIDs = [task.id]
             $0.pipeline.preferences = AppPreferences(
                 defaultProjectPath: "/tmp/demo",
@@ -204,11 +226,23 @@ final class AppFeatureTests: XCTestCase {
             agentCommand: "claude",
             tmuxSessionName: "repo-persisted-pipeline"
         )
+        let persistedRun = Run(
+            id: UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!,
+            pipelineID: pipeline.id,
+            taskID: "task-1",
+            status: .running,
+            trigger: .resumeTask,
+            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "/tmp/looper-runs/persisted.log"
+        )
 
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
         } withDependencies: {
             $0.pipelineStoreClient.fetchPipelines = { [pipeline] }
+            $0.runStoreClient.fetchRuns = { [persistedRun] }
             $0.appPreferencesClient.fetchPreferences = {
                 AppPreferences(
                     defaultProjectPath: "/tmp/repo",
@@ -238,8 +272,12 @@ final class AppFeatureTests: XCTestCase {
                 hasCompletedOnboarding: true
             ).draft
         }
+        await store.receive(\.loadRuns)
         await store.receive(\.refreshTasksButtonTapped) {
             $0.isLoadingTasks = true
+        }
+        await store.receive(\.runResponse.success) {
+            $0.runs = [persistedRun]
         }
         await store.receive(\.taskResponse.success) {
             $0.isLoadingTasks = false
@@ -573,25 +611,58 @@ final class AppFeatureTests: XCTestCase {
             source: "Feishu",
             repoPath: URL(filePath: "/tmp/demo")
         )
+        let pipelineID = UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!
+        let runningRun = Run(
+            id: UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!,
+            pipelineID: pipelineID,
+            taskID: task.id,
+            status: .running,
+            trigger: .startTask,
+            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "/tmp/looper-runs/running.log"
+        )
+        let finishedAt = Date(timeIntervalSince1970: 1_234_567_999)
+        let finishedRun = runningRun.finished(
+            status: .succeeded,
+            exitCode: nil,
+            finishedAt: finishedAt
+        )
         let recorder = TaskStatusRecorder()
 
         let store = TestStore(
             initialState: AppFeature.State(
                 tasks: [task],
+                runs: [runningRun],
                 selectedTaskID: task.id,
                 pipeline: PipelineFeature.State(
+                    pipelines: [
+                        Pipeline(
+                            id: pipelineID,
+                            name: "demo",
+                            projectPath: "/tmp/demo",
+                            executionPath: "/tmp/demo",
+                            agentCommand: "claude",
+                            tmuxSessionName: "demo"
+                        )
+                    ],
+                    selectedPipelineID: pipelineID,
                     preferences: AppPreferences(taskProviderConfiguration: providerConfiguration)
                 )
             )
         ) {
             AppFeature()
         } withDependencies: {
+            $0.runStoreClient.saveRun = { _ in }
             $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
                 await recorder.record(taskID, status)
             }
+            $0.date.now = finishedAt
         }
 
         await store.send(.markSelectedTaskDoneButtonTapped) {
+            $0.runs = [finishedRun]
             $0.updatingTaskIDs = [task.id]
         }
         await store.receive(\.taskStatusUpdateResponse.success) {
@@ -629,11 +700,29 @@ final class AppFeatureTests: XCTestCase {
             source: "Feishu",
             repoPath: URL(filePath: "/tmp/demo")
         )
+        let runningRun = Run(
+            id: UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!,
+            pipelineID: pipeline.id,
+            taskID: task.id,
+            status: .running,
+            trigger: .startTask,
+            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "/tmp/looper-runs/running.log"
+        )
+        let finishedAt = Date(timeIntervalSince1970: 1_234_567_999)
+        let finishedRun = runningRun.finished(
+            status: .succeeded,
+            exitCode: 0,
+            finishedAt: finishedAt
+        )
         let recorder = TaskStatusRecorder()
 
         let store = TestStore(
             initialState: AppFeature.State(
                 tasks: [task],
+                runs: [runningRun],
                 selectedTaskID: task.id,
                 pipeline: PipelineFeature.State(
                     pipelines: [pipeline],
@@ -644,9 +733,11 @@ final class AppFeatureTests: XCTestCase {
         ) {
             AppFeature()
         } withDependencies: {
+            $0.runStoreClient.saveRun = { _ in }
             $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
                 await recorder.record(taskID, status)
             }
+            $0.date.now = finishedAt
         }
 
         let event = PipelineTerminalEvent(
@@ -656,6 +747,7 @@ final class AppFeatureTests: XCTestCase {
         )
 
         await store.send(.terminalEventReceived(event)) {
+            $0.runs = [finishedRun]
             $0.updatingTaskIDs = [task.id]
         }
         await store.receive(\.taskStatusUpdateResponse.success) {

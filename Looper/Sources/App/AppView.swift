@@ -56,7 +56,7 @@ struct AppView: View {
             .padding(24)
         }
         .alert(
-            "Task Provider Error",
+            "Looper Error",
             isPresented: Binding(
                 get: { store.taskProviderErrorMessage != nil },
                 set: { if !$0 { store.send(.dismissTaskProviderError) } }
@@ -166,6 +166,9 @@ struct AppView: View {
                         Spacer()
 
                         AppStatusBadge(title: session.phase.label)
+                        if let currentRun {
+                            AppStatusBadge(title: currentRun.status.label)
+                        }
 
                         Button {
                             store.send(.pipeline(.attachSelectedPipelineButtonTapped))
@@ -217,6 +220,7 @@ struct AppView: View {
             VStack(alignment: .leading, spacing: 18) {
                 taskCard
                 executionCard
+                runsCard
                 controlsCard
                 setupCard
             }
@@ -260,10 +264,54 @@ struct AppView: View {
                 AppInspectorRow(label: "Command", value: pipeline.agentCommand.ifEmpty(fallback: "Shell only"))
                 AppInspectorRow(label: "tmux", value: pipeline.tmuxSessionName)
                 AppInspectorRow(label: "Terminal", value: selectedSession?.phase.label ?? "Not Ready")
+
+                Divider()
+
+                if let currentRun {
+                    AppInspectorRow(label: "Current Run", value: currentRun.id.uuidString)
+                    AppInspectorRow(label: "Run Status", value: currentRun.status.label)
+                    AppInspectorRow(label: "Trigger", value: currentRun.trigger.label)
+                    AppInspectorRow(label: "Started", value: currentRun.startedAt.runTimestamp)
+                    AppInspectorRow(
+                        label: "Finished",
+                        value: currentRun.finishedAt?.runTimestamp ?? "In Progress"
+                    )
+                    AppInspectorRow(
+                        label: "Exit Code",
+                        value: currentRun.exitCode.map(String.init) ?? "Pending"
+                    )
+                    AppInspectorRow(label: "Log Path", value: currentRun.logPath)
+                } else {
+                    Text("No active or recent run is attached to this pipeline yet.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 Text("This task has no active execution pipeline yet.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 18))
+    }
+
+    private var runsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Runs")
+                .font(.headline)
+
+            if recentRuns.isEmpty {
+                Text("No runs recorded for the current selection yet.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(recentRuns) { run in
+                    RunListRow(run: run)
+                    if run.id != recentRuns.last?.id {
+                        Divider()
+                    }
+                }
             }
         }
         .padding(16)
@@ -402,6 +450,32 @@ struct AppView: View {
         return terminalRegistry.session(id: selectedPipeline.id)
     }
 
+    private var currentRun: Run? {
+        guard let selectedPipeline else { return nil }
+
+        if let selectedTask,
+           let matchingRun = store.runs.first(where: {
+               $0.pipelineID == selectedPipeline.id && $0.taskID == selectedTask.id && $0.isActive
+           })
+        {
+            return matchingRun
+        }
+
+        return store.runs.first(where: { $0.pipelineID == selectedPipeline.id })
+    }
+
+    private var recentRuns: [Run] {
+        guard let selectedPipeline else { return [] }
+
+        let filteredRuns = store.runs.filter { run in
+            guard run.pipelineID == selectedPipeline.id else { return false }
+            guard let selectedTask else { return true }
+            return run.taskID == selectedTask.id
+        }
+
+        return Array(filteredRuns.prefix(4))
+    }
+
     private var isSelectedTaskUpdating: Bool {
         guard let selectedTask else { return false }
         return store.updatingTaskIDs.contains(selectedTask.id)
@@ -479,6 +553,40 @@ private struct AppInspectorRow: View {
 }
 
 @MainActor
+private struct RunListRow: View {
+    let run: Run
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(run.status.label)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(run.startedAt.runTimestamp)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(run.trigger.label)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            if let finishedAt = run.finishedAt {
+                Text("Finished \(finishedAt.runTimestamp)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(run.logPath)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .textSelection(.enabled)
+        }
+    }
+}
+
+@MainActor
 struct AppStatusBadge: View {
     let title: String
 
@@ -496,3 +604,16 @@ private extension String {
         isEmpty ? fallback : self
     }
 }
+
+private extension Date {
+    var runTimestamp: String {
+        runTimestampFormatter.string(from: self)
+    }
+}
+
+private let runTimestampFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .short
+    formatter.timeStyle = .medium
+    return formatter
+}()

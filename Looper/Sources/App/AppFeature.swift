@@ -3,9 +3,12 @@ import Foundation
 
 @Reducer
 struct AppFeature {
+    @Dependency(\.date.now) var now
     @Dependency(\.environmentSetupClient) var environmentSetupClient
+    @Dependency(\.runStoreClient) var runStoreClient
     @Dependency(\.taskProviderClient) var taskProviderClient
     @Dependency(\.pipelineTerminalClient) var pipelineTerminalClient
+    @Dependency(\.uuid) var uuid
 
     enum SetupStep: Int, CaseIterable, Equatable, Sendable {
         case welcome
@@ -41,9 +44,18 @@ struct AppFeature {
         }
     }
 
+    struct RunFailure: LocalizedError, Equatable, Sendable {
+        var description: String
+
+        var errorDescription: String? {
+            description
+        }
+    }
+
     @ObservableState
     struct State: Equatable {
         var tasks: IdentifiedArrayOf<LooperTask> = []
+        var runs: IdentifiedArrayOf<Run> = []
         var selectedTaskID: LooperTask.ID?
         var isLoadingTasks = false
         var updatingTaskIDs: Set<LooperTask.ID> = []
@@ -75,8 +87,11 @@ struct AppFeature {
         case onAppear
         case openLocalTaskComposerButtonTapped
         case openSetupButtonTapped
+        case loadRuns
         case selectTaskProvider(TaskProviderKind)
         case refreshTasksButtonTapped
+        case runPersistenceFailed(RunFailure)
+        case runResponse(Result<[Run], RunFailure>)
         case runEnvironmentCheckButtonTapped
         case selectTask(LooperTask.ID?)
         case startSelectedTaskButtonTapped
@@ -224,6 +239,29 @@ struct AppFeature {
                     }
                 }
 
+            case .loadRuns:
+                return .run { send in
+                    do {
+                        let runs = try await runStoreClient.fetchRuns()
+                        await send(.runResponse(.success(runs)))
+                    } catch {
+                        await send(
+                            .runResponse(
+                                .failure(.init(description: error.localizedDescription))
+                            )
+                        )
+                    }
+                }
+
+            case let .runResponse(.success(runs)):
+                state.runs = IdentifiedArray(uniqueElements: runs)
+                return .none
+
+            case let .runResponse(.failure(error)),
+                let .runPersistenceFailed(error):
+                state.taskProviderErrorMessage = error.description
+                return .none
+
             case let .taskResponse(.success(tasks)):
                 state.isLoadingTasks = false
                 state.tasks = IdentifiedArray(uniqueElements: tasks)
@@ -288,11 +326,36 @@ struct AppFeature {
                 guard let task = selectedTask(state: state) else { return .none }
 
                 if let existingPipelineID = pipelineID(for: task, in: state.pipeline.pipelines) {
+                    if let activeRun = activeRun(
+                        for: existingPipelineID,
+                        in: state.runs
+                    ) {
+                        guard activeRun.taskID == task.id else {
+                            state.taskProviderErrorMessage = "Finish the current run in this pipeline before starting another task."
+                            return .none
+                        }
+                    }
+
                     state.selectedTaskID = task.id
                     var effects: [Effect<Action>] = [
                         .send(.pipeline(.selectPipeline(existingPipelineID))),
                         .send(.pipeline(.attachSelectedPipelineButtonTapped)),
                     ]
+
+                    if activeRun(for: existingPipelineID, in: state.runs) == nil {
+                        effects.insert(
+                            beginRun(
+                                pipelineID: existingPipelineID,
+                                taskID: task.id,
+                                trigger: .resumeTask,
+                                state: &state,
+                                runID: uuid(),
+                                startedAt: now,
+                                saveRun: runStoreClient.saveRun
+                            ),
+                            at: 0
+                        )
+                    }
 
                     if state.pipeline.preferences.taskProviderConfiguration.canFetchTasks {
                         effects.append(
@@ -322,12 +385,22 @@ struct AppFeature {
                     return .none
                 }
 
-                return writeTaskStatus(
-                    taskID: task.id,
-                    status: .done,
-                    configuration: state.pipeline.preferences.taskProviderConfiguration,
-                    state: &state,
-                    updateStatus: taskProviderClient.updateTaskStatus
+                return .merge(
+                    finishActiveRun(
+                        for: task,
+                        status: .succeeded,
+                        exitCode: nil,
+                        state: &state,
+                        finishedAt: now,
+                        saveRun: runStoreClient.saveRun
+                    ),
+                    writeTaskStatus(
+                        taskID: task.id,
+                        status: .done,
+                        configuration: state.pipeline.preferences.taskProviderConfiguration,
+                        state: &state,
+                        updateStatus: taskProviderClient.updateTaskStatus
+                    )
                 )
 
             case .markSelectedTaskFailedButtonTapped:
@@ -337,27 +410,51 @@ struct AppFeature {
                     return .none
                 }
 
-                return writeTaskStatus(
-                    taskID: task.id,
-                    status: .failed,
-                    configuration: state.pipeline.preferences.taskProviderConfiguration,
-                    state: &state,
-                    updateStatus: taskProviderClient.updateTaskStatus
+                return .merge(
+                    finishActiveRun(
+                        for: task,
+                        status: .failed,
+                        exitCode: nil,
+                        state: &state,
+                        finishedAt: now,
+                        saveRun: runStoreClient.saveRun
+                    ),
+                    writeTaskStatus(
+                        taskID: task.id,
+                        status: .failed,
+                        configuration: state.pipeline.preferences.taskProviderConfiguration,
+                        state: &state,
+                        updateStatus: taskProviderClient.updateTaskStatus
+                    )
                 )
 
             case let .pipeline(.createPipelineResponse(.success(pipeline))):
                 if let taskID = taskID(matching: pipeline, in: state.tasks) {
                     state.selectedTaskID = taskID
+                    let runEffect = beginRun(
+                        pipelineID: pipeline.id,
+                        taskID: taskID,
+                        trigger: .startTask,
+                        state: &state,
+                        runID: uuid(),
+                        startedAt: now,
+                        saveRun: runStoreClient.saveRun
+                    )
 
                     if state.pipeline.preferences.taskProviderConfiguration.canFetchTasks {
-                        return writeTaskStatus(
-                            taskID: taskID,
-                            status: .developing,
-                            configuration: state.pipeline.preferences.taskProviderConfiguration,
-                            state: &state,
-                            updateStatus: taskProviderClient.updateTaskStatus
+                        return .merge(
+                            runEffect,
+                            writeTaskStatus(
+                                taskID: taskID,
+                                status: .developing,
+                                configuration: state.pipeline.preferences.taskProviderConfiguration,
+                                state: &state,
+                                updateStatus: taskProviderClient.updateTaskStatus
+                            )
                         )
                     }
+
+                    return runEffect
                 }
                 return .none
 
@@ -366,17 +463,22 @@ struct AppFeature {
                     state.selectedTaskID = taskIDMatchingSelectedPipeline(state: state) ?? state.tasks.ids.first
                 }
 
+                let loadRunsEffect: Effect<Action> = .send(.loadRuns)
+
                 if !payload.preferences.hasCompletedOnboarding {
                     state.isSetupWizardPresented = true
                     state.setupStep = .welcome
-                    return .none
+                    return loadRunsEffect
                 }
 
                 guard payload.preferences.taskProviderConfiguration.canFetchTasks else {
-                    return .none
+                    return loadRunsEffect
                 }
 
-                return .send(.refreshTasksButtonTapped)
+                return .merge(
+                    loadRunsEffect,
+                    .send(.refreshTasksButtonTapped)
+                )
 
             case .pipeline(.savePreferencesFinished):
                 if state.isFinishingSetup {
@@ -422,18 +524,32 @@ struct AppFeature {
                 guard let task = state.tasks[id: taskID] else { return .none }
                 guard task.status == .developing else { return .none }
 
+                let runStatus: Run.Status = suggestedStatus == .done ? .succeeded : .failed
+                let runEffect = finishActiveRun(
+                    pipelineID: event.pipelineID,
+                    taskID: taskID,
+                    status: runStatus,
+                    exitCode: event.exitCode,
+                    state: &state,
+                    finishedAt: now,
+                    saveRun: runStoreClient.saveRun
+                )
+
                 if state.pipeline.preferences.taskProviderConfiguration.canFetchTasks {
-                    return writeTaskStatus(
-                        taskID: taskID,
-                        status: suggestedStatus,
-                        configuration: state.pipeline.preferences.taskProviderConfiguration,
-                        state: &state,
-                        updateStatus: taskProviderClient.updateTaskStatus
+                    return .merge(
+                        runEffect,
+                        writeTaskStatus(
+                            taskID: taskID,
+                            status: suggestedStatus,
+                            configuration: state.pipeline.preferences.taskProviderConfiguration,
+                            state: &state,
+                            updateStatus: taskProviderClient.updateTaskStatus
+                        )
                     )
                 }
 
                 updateTaskStatus(id: taskID, status: suggestedStatus, state: &state)
-                return .none
+                return runEffect
 
             case .dismissTaskProviderError:
                 state.taskProviderErrorMessage = nil
@@ -450,6 +566,22 @@ struct AppFeature {
 private func selectedTask(state: AppFeature.State) -> LooperTask? {
     guard let selectedTaskID = state.selectedTaskID else { return nil }
     return state.tasks[id: selectedTaskID]
+}
+
+private func selectedPipeline(state: AppFeature.State) -> Pipeline? {
+    if let selectedPipelineID = state.pipeline.selectedPipelineID,
+       let pipeline = state.pipeline.pipelines[id: selectedPipelineID]
+    {
+        return pipeline
+    }
+
+    guard let task = selectedTask(state: state),
+          let pipelineID = pipelineID(for: task, in: state.pipeline.pipelines)
+    else {
+        return nil
+    }
+
+    return state.pipeline.pipelines[id: pipelineID]
 }
 
 private func syncPipelineSelection(state: inout AppFeature.State) -> Effect<AppFeature.Action> {
@@ -500,6 +632,23 @@ private func taskIDMatchingSelectedPipeline(state: AppFeature.State) -> LooperTa
     return taskID(matching: pipeline, in: state.tasks)
 }
 
+private func activeRun(
+    for pipelineID: UUID,
+    in runs: IdentifiedArrayOf<Run>
+) -> Run? {
+    runs.first { $0.pipelineID == pipelineID && $0.isActive }
+}
+
+private func activeRunID(
+    pipelineID: UUID,
+    taskID: LooperTask.ID,
+    in runs: IdentifiedArrayOf<Run>
+) -> UUID? {
+    runs.first {
+        $0.pipelineID == pipelineID && $0.taskID == taskID && $0.isActive
+    }?.id
+}
+
 private func updateTaskStatus(
     id: LooperTask.ID,
     status: LooperTask.Status,
@@ -507,6 +656,108 @@ private func updateTaskStatus(
 ) {
     guard state.tasks[id: id] != nil else { return }
     state.tasks[id: id]?.status = status
+}
+
+private func beginRun(
+    pipelineID: UUID,
+    taskID: LooperTask.ID,
+    trigger: Run.Trigger,
+    state: inout AppFeature.State,
+    runID: UUID,
+    startedAt: Date,
+    saveRun: @escaping @Sendable (Run) async throws -> Void
+) -> Effect<AppFeature.Action> {
+    let run = Run(
+        id: runID,
+        pipelineID: pipelineID,
+        taskID: taskID,
+        status: .running,
+        trigger: trigger,
+        startedAt: startedAt,
+        finishedAt: nil,
+        exitCode: nil,
+        logPath: logPath(for: runID)
+    )
+
+    state.runs.insert(run, at: 0)
+
+    return .run { send in
+        do {
+            try await saveRun(run)
+        } catch {
+            await send(
+                .runPersistenceFailed(
+                    .init(description: error.localizedDescription)
+                )
+            )
+        }
+    }
+}
+
+private func finishActiveRun(
+    for task: LooperTask,
+    status: Run.Status,
+    exitCode: Int32?,
+    state: inout AppFeature.State,
+    finishedAt: Date,
+    saveRun: @escaping @Sendable (Run) async throws -> Void
+) -> Effect<AppFeature.Action> {
+    guard let pipeline = selectedPipeline(state: state) else { return .none }
+    return finishActiveRun(
+        pipelineID: pipeline.id,
+        taskID: task.id,
+        status: status,
+        exitCode: exitCode,
+        state: &state,
+        finishedAt: finishedAt,
+        saveRun: saveRun
+    )
+}
+
+private func finishActiveRun(
+    pipelineID: UUID,
+    taskID: LooperTask.ID,
+    status: Run.Status,
+    exitCode: Int32?,
+    state: inout AppFeature.State,
+    finishedAt: Date,
+    saveRun: @escaping @Sendable (Run) async throws -> Void
+) -> Effect<AppFeature.Action> {
+    guard let runID = activeRunID(
+        pipelineID: pipelineID,
+        taskID: taskID,
+        in: state.runs
+    ),
+    let run = state.runs[id: runID]
+    else {
+        return .none
+    }
+
+    let finishedRun = run.finished(
+        status: status,
+        exitCode: exitCode,
+        finishedAt: finishedAt
+    )
+    state.runs[id: runID] = finishedRun
+
+    return .run { send in
+        do {
+            try await saveRun(finishedRun)
+        } catch {
+            await send(
+                .runPersistenceFailed(
+                    .init(description: error.localizedDescription)
+                )
+            )
+        }
+    }
+}
+
+private func logPath(for runID: UUID) -> String {
+    URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        .appendingPathComponent("looper-runs", isDirectory: true)
+        .appendingPathComponent("\(runID.uuidString).log", isDirectory: false)
+        .path(percentEncoded: false)
 }
 
 private func writeTaskStatus(
