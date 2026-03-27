@@ -3,6 +3,10 @@ import SwiftUI
 
 @MainActor
 struct AppView: View {
+    private let workspaceHorizontalInset: CGFloat = 12
+    private let workspaceBottomInset: CGFloat = 12
+    private let boardColumnSpacing: CGFloat = 12
+
     @Bindable var store: StoreOf<AppFeature>
     let terminalRegistry: PipelineTerminalRegistry
 
@@ -48,7 +52,6 @@ struct AppView: View {
         ) {
             SettingsView(store: store)
                 .frame(width: 820, height: 760)
-                .padding(28)
         }
         .sheet(
             isPresented: Binding(
@@ -120,9 +123,9 @@ struct AppView: View {
             Button {
                 store.send(.openSettingsButtonTapped)
             } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 28, height: 28)
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14, weight: .regular))
+                    .frame(width: 20, height: 20)
             }
             .buttonStyle(.plain)
             .help("Settings")
@@ -151,8 +154,8 @@ struct AppView: View {
                         terminalWorkspace(for: pipeline)
                     }
                 }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
+                .padding(.horizontal, workspaceHorizontalInset)
+                .padding(.bottom, workspaceBottomInset)
                 .padding(.top, 0)
                 .frame(
                     maxWidth: .infinity,
@@ -188,7 +191,7 @@ struct AppView: View {
 
     private func taskBoard(for pipeline: Pipeline) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: boardColumnSpacing) {
                 boardColumn(
                     title: "未开始",
                     subtitle: "Ready to start",

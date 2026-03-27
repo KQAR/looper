@@ -26,6 +26,8 @@ let project = Project(
             bundleId: "com.jarvis.looper",
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "Looper",
+                "CFBundleShortVersionString": "0.0.1",
+                "CFBundleVersion": "1",
                 "LSMinimumSystemVersion": "26.0",
             ]),
             sources: ["Looper/Sources/**"],
