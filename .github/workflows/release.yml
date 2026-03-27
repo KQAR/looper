@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - name: Install dependencies
+        run: tuist install
+
+      - name: Generate project
+        run: tuist generate --no-open
+
+      - name: Build release archive
+        run: |
+          xcodebuild archive \
+            -workspace Looper.xcworkspace \
+            -scheme Looper \
+            -configuration Release \
+            -archivePath "${{ runner.temp }}/Looper.xcarchive" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Export app
+        run: |
+          cp -R "${{ runner.temp }}/Looper.xcarchive/Products/Applications/Looper.app" \
+            "${{ runner.temp }}/Looper.app"
+
+      - name: Create DMG
+        run: |
+          hdiutil create -volname Looper \
+            -srcfolder "${{ runner.temp }}/Looper.app" \
+            -ov -format UDZO \
+            "${{ runner.temp }}/Looper.dmg"
+
+      - name: Sign update & generate appcast
+        if: env.SPARKLE_KEY != ''
+        env:
+          SPARKLE_KEY: ${{ secrets.SPARKLE_EDDSA_KEY }}
+        run: |
+          SPARKLE_BIN="Tuist/.build/artifacts/sparkle/Sparkle/bin"
+          echo "$SPARKLE_KEY" | "$SPARKLE_BIN/sign_update" "${{ runner.temp }}/Looper.dmg"
+
+          mkdir -p "${{ runner.temp }}/artifacts"
+          cp "${{ runner.temp }}/Looper.dmg" "${{ runner.temp }}/artifacts/"
+          "$SPARKLE_BIN/generate_appcast" "${{ runner.temp }}/artifacts/"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ASSETS=("${{ runner.temp }}/Looper.dmg")
+          if [ -f "${{ runner.temp }}/artifacts/appcast.xml" ]; then
+            ASSETS+=("${{ runner.temp }}/artifacts/appcast.xml")
+          fi
+          gh release create "${{ github.ref_name }}" \
+            "${ASSETS[@]}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes

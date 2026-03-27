@@ -33,8 +33,8 @@ let project = Project(
             bundleId: "com.jarvis.looper",
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "Looper",
-                "CFBundleShortVersionString": "0.0.1",
-                "CFBundleVersion": "1",
+                "CFBundleShortVersionString": "0.0.2",
+                "CFBundleVersion": "2",
                 "LSMinimumSystemVersion": "26.0",
                 "SUFeedURL": "https://github.com/KQAR/looper/releases/latest/download/appcast.xml",
                 "SUPublicEDKey": "HOQ0tDtw/nV9GXRIMUtzImgNssckFEj5fFLe2Lp0LDY=",
