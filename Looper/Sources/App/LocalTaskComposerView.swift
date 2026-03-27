@@ -4,19 +4,22 @@ import SwiftUI
 struct LocalTaskComposerView: View {
     @State private var draft: LocalTaskDraft
 
+    let pipelineName: String?
     let isCreating: Bool
     let onCancel: () -> Void
     let onCreate: (LocalTaskDraft) -> Void
 
     init(
-        defaultProjectPath: String,
+        projectPath: String,
+        pipelineName: String? = nil,
         isCreating: Bool,
         onCancel: @escaping () -> Void,
         onCreate: @escaping (LocalTaskDraft) -> Void
     ) {
         _draft = State(
-            initialValue: LocalTaskDraft(projectPath: defaultProjectPath)
+            initialValue: LocalTaskDraft(projectPath: projectPath)
         )
+        self.pipelineName = pipelineName
         self.isCreating = isCreating
         self.onCancel = onCancel
         self.onCreate = onCreate
@@ -25,9 +28,9 @@ struct LocalTaskComposerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("New Local Task")
+                Text(composerTitle)
                     .font(.title2.weight(.semibold))
-                Text("Create a task inside Looper without relying on any external board.")
+                Text(composerSubtitle)
                     .foregroundStyle(.secondary)
             }
 
@@ -47,9 +50,19 @@ struct LocalTaskComposerView: View {
                 }
 
                 labeledField("Project Path") {
-                    TextField("/Users/you/project", text: $draft.projectPath)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.body.monospaced())
+                    if pipelineName == nil {
+                        TextField("/Users/you/project", text: $draft.projectPath)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.body.monospaced())
+                    } else {
+                        Text(draft.projectPath)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
+                            .textSelection(.enabled)
+                    }
                 }
             }
 
@@ -97,5 +110,19 @@ struct LocalTaskComposerView: View {
                 .foregroundStyle(.secondary)
             content()
         }
+    }
+
+    private var composerTitle: String {
+        if let pipelineName {
+            return "New Task in \(pipelineName)"
+        }
+        return "New Local Task"
+    }
+
+    private var composerSubtitle: String {
+        if pipelineName == nil {
+            return "Create a task inside Looper without relying on any external board."
+        }
+        return "Create a task directly inside the selected pipeline without relying on any external board."
     }
 }

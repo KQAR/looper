@@ -55,4 +55,17 @@ extension PipelineTerminalClient: DependencyKey {
             }
         }
     )
+
+    static let testValue = PipelineTerminalClient(
+        upsertSession: { _ in },
+        removeSession: { _ in },
+        focusSession: { _ in },
+        bootstrapSession: { _ in },
+        rebuildSession: { _ in },
+        events: {
+            AsyncStream { continuation in
+                continuation.finish()
+            }
+        }
+    )
 }

@@ -28,5 +28,7 @@ struct LooperApp: App {
             .frame(minWidth: 1240, minHeight: 760)
         }
         .defaultSize(width: 1480, height: 920)
+        .windowToolbarStyle(.unified(showsTitle: false))
+        .windowStyle(.hiddenTitleBar)
     }
 }
