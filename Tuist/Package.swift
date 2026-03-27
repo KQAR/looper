@@ -16,5 +16,9 @@ let package = Package(
             url: "https://github.com/Lakr233/libghostty-spm.git",
             from: "1.0.1774295826"
         ),
+        .package(
+            url: "https://github.com/sparkle-project/Sparkle.git",
+            from: "2.7.0"
+        ),
     ]
 )

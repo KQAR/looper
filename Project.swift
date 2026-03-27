@@ -29,6 +29,9 @@ let project = Project(
                 "CFBundleShortVersionString": "0.0.1",
                 "CFBundleVersion": "1",
                 "LSMinimumSystemVersion": "26.0",
+                "SUFeedURL": "https://github.com/KQAR/looper/releases/latest/download/appcast.xml",
+                "SUPublicEDKey": "HOQ0tDtw/nV9GXRIMUtzImgNssckFEj5fFLe2Lp0LDY=",
+                "SUEnableAutomaticChecks": true,
             ]),
             sources: ["Looper/Sources/**"],
             resources: ["Looper/Resources/**"],
@@ -36,6 +39,7 @@ let project = Project(
                 .external(name: "ComposableArchitecture"),
                 .external(name: "GRDB"),
                 .external(name: "GhosttyTerminal"),
+                .external(name: "Sparkle"),
             ]
         ),
         .target(

@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import Sparkle
 import SwiftUI
 
 @MainActor
@@ -6,6 +7,11 @@ import SwiftUI
 struct LooperApp: App {
     @State private var store: StoreOf<AppFeature>
     @State private var terminalRegistry = PipelineTerminalRegistry.shared
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
 
     init() {
         let database = AppDatabase.makeLive()
@@ -26,6 +32,7 @@ struct LooperApp: App {
                 terminalRegistry: terminalRegistry
             )
             .frame(minWidth: 1240, minHeight: 760)
+            .environment(\.updater, updaterController.updater)
         }
         .defaultSize(width: 1480, height: 920)
         .windowToolbarStyle(.unified(showsTitle: false))

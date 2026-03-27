@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import Sparkle
 import SwiftUI
 
 @MainActor
@@ -8,6 +9,7 @@ struct SettingsView: View {
     @Bindable var store: StoreOf<AppFeature>
     @State private var selectedSection: SettingsSection? = .general
     @Namespace private var sidebarSelectionAnimation
+    @Environment(\.updater) private var updater
 
     var body: some View {
         NavigationSplitView {
@@ -81,7 +83,9 @@ struct SettingsView: View {
     }
 
     private var checkForUpdatesButton: some View {
-        Button {} label: {
+        Button {
+            updater?.checkForUpdates()
+        } label: {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.up.circle")
                     .font(.system(size: 13, weight: .medium))
@@ -101,6 +105,7 @@ struct SettingsView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
+        .disabled(updater?.canCheckForUpdates != true)
         .help("Check for Updates")
     }
 
