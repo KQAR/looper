@@ -12,6 +12,13 @@ let project = Project(
             "SWIFT_VERSION": "6.0",
             "MACOSX_DEPLOYMENT_TARGET": "26.0",
             "SWIFT_STRICT_CONCURRENCY": "complete",
+            "ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS": "YES",
+            "ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS": "YES",
+            "ENABLE_USER_SCRIPT_SANDBOXING": "YES",
+            "ENABLE_MODULE_VERIFIER": "YES",
+            "MODULE_VERIFIER_SUPPORTED_LANGUAGES": "objective-c objective-c++",
+            "SWIFT_EMIT_LOC_STRINGS": "YES",
+            "STRING_CATALOG_GENERATE_SYMBOLS": "YES",
         ],
         configurations: [
             .debug(name: "Debug"),
