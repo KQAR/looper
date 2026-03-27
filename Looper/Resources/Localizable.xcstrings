@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "/Users/you/project" : {
+
+    },
     "alert.error" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -204,6 +207,9 @@
           }
         }
       }
+    },
+    "Bundle ID" : {
+
     },
     "composer.cancel" : {
       "extractionState" : "manual",
