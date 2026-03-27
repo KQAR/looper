@@ -51,11 +51,16 @@ jobs:
           SPARKLE_KEY: ${{ secrets.SPARKLE_EDDSA_KEY }}
         run: |
           SPARKLE_BIN="Tuist/.build/artifacts/sparkle/Sparkle/bin"
-          echo "$SPARKLE_KEY" | "$SPARKLE_BIN/sign_update" "${{ runner.temp }}/Looper.dmg"
+          KEY_FILE="${{ runner.temp }}/sparkle_key"
+          echo "$SPARKLE_KEY" > "$KEY_FILE"
+
+          "$SPARKLE_BIN/sign_update" "${{ runner.temp }}/Looper.dmg" --ed-key-file "$KEY_FILE"
 
           mkdir -p "${{ runner.temp }}/artifacts"
           cp "${{ runner.temp }}/Looper.dmg" "${{ runner.temp }}/artifacts/"
-          "$SPARKLE_BIN/generate_appcast" "${{ runner.temp }}/artifacts/"
+          "$SPARKLE_BIN/generate_appcast" "${{ runner.temp }}/artifacts/" --ed-key-file "$KEY_FILE"
+
+          rm -f "$KEY_FILE"
 
       - name: Create GitHub Release
         env:
