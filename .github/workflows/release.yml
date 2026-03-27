@@ -38,12 +38,11 @@ jobs:
           cp -R "${{ runner.temp }}/Looper.xcarchive/Products/Applications/Looper.app" \
             "${{ runner.temp }}/Looper.app"
 
+      - name: Install create-dmg
+        run: brew install create-dmg
+
       - name: Create DMG
-        run: |
-          hdiutil create -volname Looper \
-            -srcfolder "${{ runner.temp }}/Looper.app" \
-            -ov -format UDZO \
-            "${{ runner.temp }}/Looper.dmg"
+        run: scripts/create-dmg.sh "${{ runner.temp }}/Looper.app" "${{ runner.temp }}"
 
       - name: Sign update & generate appcast
         if: env.SPARKLE_KEY != ''
