@@ -10,6 +10,8 @@ struct TaskBoardCard: View {
     let onMarkDone: (() -> Void)?
     let onMarkFailed: (() -> Void)?
 
+    private let lang = AppLanguageManager.shared
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
@@ -18,7 +20,7 @@ struct TaskBoardCard: View {
                     .foregroundStyle(.primary)
                     .lineLimit(2)
                 Spacer()
-                AppStatusBadge(title: task.status.label)
+                AppStatusBadge(title: task.status.localizedLabel(bundle: lang.bundle))
             }
 
             Text(task.summary)
@@ -27,7 +29,7 @@ struct TaskBoardCard: View {
                 .lineLimit(3)
 
             HStack(spacing: 8) {
-                Text(task.repoPath?.lastPathComponent ?? "No Project")
+                Text(task.repoPath?.lastPathComponent ?? String(localized: "task.noProject", bundle: lang.bundle))
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                 Text(task.source)
@@ -36,27 +38,30 @@ struct TaskBoardCard: View {
             }
 
             HStack(spacing: 8) {
-                Button(isSelected ? "Selected" : "Inspect") {
+                Button(isSelected
+                    ? String(localized: "task.selected", bundle: lang.bundle)
+                    : String(localized: "task.inspect", bundle: lang.bundle)
+                ) {
                     onSelect()
                 }
                 .buttonStyle(.bordered)
 
                 if let onStart {
-                    Button("Start") {
+                    Button(String(localized: "task.start", bundle: lang.bundle)) {
                         onStart()
                     }
                     .buttonStyle(.borderedProminent)
                 }
 
                 if let onMarkDone {
-                    Button("Done") {
+                    Button(String(localized: "task.done", bundle: lang.bundle)) {
                         onMarkDone()
                     }
                     .buttonStyle(.bordered)
                 }
 
                 if let onMarkFailed {
-                    Button("Fail") {
+                    Button(String(localized: "task.fail", bundle: lang.bundle)) {
                         onMarkFailed()
                     }
                     .buttonStyle(.bordered)

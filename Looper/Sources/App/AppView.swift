@@ -10,6 +10,7 @@ struct AppView: View {
     @Bindable var store: StoreOf<AppFeature>
     let terminalRegistry: PipelineTerminalRegistry
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    private let lang = AppLanguageManager.shared
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -77,13 +78,13 @@ struct AppView: View {
             .padding(24)
         }
         .alert(
-            "Looper Error",
+            String(localized: "alert.error", bundle: lang.bundle),
             isPresented: Binding(
                 get: { store.taskProviderErrorMessage != nil },
                 set: { if !$0 { store.send(.dismissTaskProviderError) } }
             )
         ) {
-            Button("OK", role: .cancel) {
+            Button(String(localized: "alert.ok", bundle: lang.bundle), role: .cancel) {
                 store.send(.dismissTaskProviderError)
             }
         } message: {
@@ -95,34 +96,33 @@ struct AppView: View {
     }
 
     private var pipelineSidebar: some View {
-        List(
-            selection: Binding(
-                get: { store.pipeline.selectedPipelineID },
-                set: { store.send(.pipeline(.selectPipeline($0))) }
-            )
-        ) {
-            Section {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("sidebar.pipelines", bundle: lang.bundle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+
                 ForEach(store.pipeline.pipelines) { pipeline in
-                    PipelineSidebarRow(
-                        pipeline: pipeline,
-                        taskCount: taskCount(for: pipeline),
-                        activeRunTitle: activeRun(for: pipeline)?.status.label
-                    )
-                    .tag(pipeline.id)
+                    pipelineSidebarButton(for: pipeline)
                 }
-            } header: {
-                Text("Pipelines")
-            } footer: {
+
                 Text(sidebarFooter)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
             }
+            .padding(.horizontal, 6)
         }
-        .listStyle(.sidebar)
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack {
                 Text("Looper")
                     .font(.title)
                     .fontWeight(.semibold)
-                
+
                 Spacer()
 
                 Button {
@@ -133,7 +133,7 @@ struct AppView: View {
                         .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain)
-                .help("New Pipeline")
+                .help(Text("sidebar.newPipeline", bundle: lang.bundle))
             }
             .padding(.top, 8)
             .padding(.horizontal, 12)
@@ -152,10 +152,34 @@ struct AppView: View {
                     .frame(width: 20, height: 20)
             }
             .buttonStyle(.plain)
-            .help("Settings")
+            .help(Text("sidebar.settings", bundle: lang.bundle))
             .padding(.leading, 12)
             .padding(.bottom, 12)
         }
+    }
+
+    private func pipelineSidebarButton(for pipeline: Pipeline) -> some View {
+        let isSelected = store.pipeline.selectedPipelineID == pipeline.id
+
+        return Button {
+            store.send(.pipeline(.selectPipeline(pipeline.id)))
+        } label: {
+            PipelineSidebarRow(
+                pipeline: pipeline,
+                taskCount: taskCount(for: pipeline),
+                activeRunTitle: activeRun(for: pipeline)?.status.localizedLabel(bundle: lang.bundle)
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                isSelected
+                    ? RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.2))
+                    : nil
+            )
+            .contentShape(.rect(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -182,19 +206,20 @@ struct AppView: View {
             .background(.regularMaterial)
         } else {
             ContentUnavailableView {
-                Label(
-                    "No Pipeline Selected",
-                    systemImage: "square.stack.3d.up.slash"
-                )
+                Label {
+                    Text("workspace.noPipelineSelected", bundle: lang.bundle)
+                } icon: {
+                    Image(systemName: "square.stack.3d.up.slash")
+                }
             } description: {
                 Text(noPipelineSelectedMessage)
             } actions: {
-                Button("New Pipeline") {
+                Button(String(localized: "workspace.newPipeline", bundle: lang.bundle)) {
                     store.send(.newPipelineButtonTapped)
                 }
 
                 if !store.pipeline.preferences.hasCompletedOnboarding {
-                    Button("Open Settings") {
+                    Button(String(localized: "workspace.openSettings", bundle: lang.bundle)) {
                         store.send(.openSettingsButtonTapped)
                     }
                 }
@@ -208,29 +233,27 @@ struct AppView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: boardColumnSpacing) {
                 boardColumn(
-                    title: "未开始",
-                    subtitle: "Ready to start",
+                    title: String(localized: "board.pending.title", bundle: lang.bundle),
+                    subtitle: String(localized: "board.pending.subtitle", bundle: lang.bundle),
                     tasks: boardTasks(for: pipeline, statuses: [.pending]),
                     emptyMessage: pendingColumnEmptyMessage
                 )
 
                 boardColumn(
-                    title: "进行中",
-                    subtitle: "Actively executing",
+                    title: String(localized: "board.developing.title", bundle: lang.bundle),
+                    subtitle: String(localized: "board.developing.subtitle", bundle: lang.bundle),
                     tasks: boardTasks(for: pipeline, statuses: [.developing]),
-                    emptyMessage:
-                        "No task is currently running in this pipeline."
+                    emptyMessage: String(localized: "board.developing.empty", bundle: lang.bundle)
                 )
 
                 boardColumn(
-                    title: "已结束",
-                    subtitle: "Done or failed",
+                    title: String(localized: "board.done.title", bundle: lang.bundle),
+                    subtitle: String(localized: "board.done.subtitle", bundle: lang.bundle),
                     tasks: boardTasks(
                         for: pipeline,
                         statuses: [.done, .failed]
                     ),
-                    emptyMessage:
-                        "Finished work will accumulate here for quick review."
+                    emptyMessage: String(localized: "board.done.empty", bundle: lang.bundle)
                 )
             }
             .frame(
@@ -312,7 +335,7 @@ struct AppView: View {
         if let session = activeSession {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Workspace")
+                    Text("workspace.title", bundle: lang.bundle)
                         .font(.headline)
                     Spacer()
                     Button {
@@ -320,7 +343,11 @@ struct AppView: View {
                             .pipeline(.attachSelectedPipelineButtonTapped)
                         )
                     } label: {
-                        Label("Attach", systemImage: "terminal")
+                        Label {
+                            Text("workspace.attach", bundle: lang.bundle)
+                        } icon: {
+                            Image(systemName: "terminal")
+                        }
                     }
                     .buttonStyle(.bordered)
                 }
@@ -345,18 +372,20 @@ struct AppView: View {
         } else {
             VStack(alignment: .leading, spacing: 12) {
                 panelHeader(
-                    title: "Workspace",
-                    subtitle: "Starting terminal session"
+                    title: String(localized: "workspace.title", bundle: lang.bundle),
+                    subtitle: String(localized: "workspace.startingSession", bundle: lang.bundle)
                 )
 
-                ProgressView("Preparing terminal surface…")
+                ProgressView {
+                    Text("workspace.preparingTerminal", bundle: lang.bundle)
+                }
                     .controlSize(.small)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 HStack {
                     Spacer()
-                    Button("Attach Again") {
+                    Button(String(localized: "workspace.attachAgain", bundle: lang.bundle)) {
                         store.send(
                             .pipeline(.attachSelectedPipelineButtonTapped)
                         )
@@ -397,20 +426,17 @@ struct AppView: View {
 
     private var sidebarFooter: String {
         if store.pipeline.pipelines.isEmpty {
-            return
-                "Create your first pipeline to keep a project workstation warm."
+            return String(localized: "sidebar.footer.empty", bundle: lang.bundle)
         }
-        return "\(store.pipeline.pipelines.count) pipelines available"
+        return String(localized: "sidebar.footer.count \(store.pipeline.pipelines.count)", bundle: lang.bundle)
     }
 
     private var noPipelineSelectedMessage: String {
         if !store.pipeline.preferences.hasCompletedOnboarding {
-            return
-                "Open Settings, choose a task provider, and set local defaults before creating the first pipeline."
+            return String(localized: "workspace.noPipeline.onboarding", bundle: lang.bundle)
         }
 
-        return
-            "Create a pipeline first. The entire right side becomes that pipeline's workspace."
+        return String(localized: "workspace.noPipeline.default", bundle: lang.bundle)
     }
 
     private var refreshTasksToolbarButton: some View {
@@ -428,7 +454,7 @@ struct AppView: View {
             store.isLoadingTasks
                 || !store.pipeline.preferences.hasCompletedOnboarding
         )
-        .help("Refresh")
+        .help(Text("toolbar.refresh", bundle: lang.bundle))
     }
 
     private var addTaskToolbarButton: some View {
@@ -437,7 +463,7 @@ struct AppView: View {
         } label: {
             Image(systemName: "plus")
         }
-        .help("Add Task")
+        .help(Text("toolbar.addTask", bundle: lang.bundle))
     }
 
     private var selectedPipeline: Pipeline? {
@@ -498,9 +524,9 @@ struct AppView: View {
     private var pendingColumnEmptyMessage: String {
         switch store.pipeline.preferences.taskProviderConfiguration.kind {
         case .local:
-            return "No local task has been added to this pipeline yet."
+            return String(localized: "board.pending.empty.local", bundle: lang.bundle)
         case .feishu:
-            return "No pending task is currently mapped into this pipeline."
+            return String(localized: "board.pending.empty.feishu", bundle: lang.bundle)
         }
     }
 

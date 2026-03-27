@@ -8,12 +8,17 @@ struct Run: Equatable, Identifiable, Sendable {
 
         var label: String {
             switch self {
-            case .running:
-                "Running"
-            case .succeeded:
-                "Succeeded"
-            case .failed:
-                "Failed"
+            case .running: "Running"
+            case .succeeded: "Succeeded"
+            case .failed: "Failed"
+            }
+        }
+
+        func localizedLabel(bundle: Bundle) -> String {
+            switch self {
+            case .running: String(localized: "run.status.running", bundle: bundle)
+            case .succeeded: String(localized: "run.status.succeeded", bundle: bundle)
+            case .failed: String(localized: "run.status.failed", bundle: bundle)
             }
         }
     }

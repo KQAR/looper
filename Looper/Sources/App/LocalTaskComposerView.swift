@@ -3,6 +3,7 @@ import SwiftUI
 @MainActor
 struct LocalTaskComposerView: View {
     @State private var draft: LocalTaskDraft
+    private let lang = AppLanguageManager.shared
 
     let pipelineName: String?
     let isCreating: Bool
@@ -35,12 +36,12 @@ struct LocalTaskComposerView: View {
             }
 
             VStack(alignment: .leading, spacing: 14) {
-                labeledField("Title") {
-                    TextField("Refactor task provider abstraction", text: $draft.title)
+                labeledField(String(localized: "composer.title.field", bundle: lang.bundle)) {
+                    TextField(String(localized: "composer.titlePlaceholder", bundle: lang.bundle), text: $draft.title)
                         .textFieldStyle(.roundedBorder)
                 }
 
-                labeledField("Summary") {
+                labeledField(String(localized: "composer.summary.field", bundle: lang.bundle)) {
                     TextEditor(text: $draft.summary)
                         .font(.body)
                         .scrollContentBackground(.hidden)
@@ -49,7 +50,7 @@ struct LocalTaskComposerView: View {
                         .frame(minHeight: 120)
                 }
 
-                labeledField("Project Path") {
+                labeledField(String(localized: "composer.projectPath.field", bundle: lang.bundle)) {
                     if pipelineName == nil {
                         TextField("/Users/you/project", text: $draft.projectPath)
                             .textFieldStyle(.roundedBorder)
@@ -67,7 +68,7 @@ struct LocalTaskComposerView: View {
             }
 
             HStack {
-                Button("Cancel") {
+                Button(String(localized: "composer.cancel", bundle: lang.bundle)) {
                     onCancel()
                 }
                 .buttonStyle(.bordered)
@@ -81,7 +82,7 @@ struct LocalTaskComposerView: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Text("Create Task")
+                        Text(String(localized: "composer.createTask", bundle: lang.bundle))
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -114,15 +115,15 @@ struct LocalTaskComposerView: View {
 
     private var composerTitle: String {
         if let pipelineName {
-            return "New Task in \(pipelineName)"
+            return String(localized: "composer.newTaskIn \(pipelineName)", bundle: lang.bundle)
         }
-        return "New Local Task"
+        return String(localized: "composer.newLocalTask", bundle: lang.bundle)
     }
 
     private var composerSubtitle: String {
         if pipelineName == nil {
-            return "Create a task inside Looper without relying on any external board."
+            return String(localized: "composer.subtitle.noPipeline", bundle: lang.bundle)
         }
-        return "Create a task directly inside the selected pipeline without relying on any external board."
+        return String(localized: "composer.subtitle.withPipeline", bundle: lang.bundle)
     }
 }

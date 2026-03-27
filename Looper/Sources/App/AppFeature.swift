@@ -119,7 +119,7 @@ struct AppFeature {
                     return .none
                 }
                 guard state.pipeline.selectedPipelineID != nil else {
-                    state.taskProviderErrorMessage = "Create or select a pipeline before adding a local task."
+                    state.taskProviderErrorMessage = String(localized: "error.createPipelineFirst", bundle: .localized)
                     return .none
                 }
                 state.isLocalTaskComposerPresented = true
@@ -153,7 +153,7 @@ struct AppFeature {
                 if configuration.kind == .feishu,
                    !configuration.feishu.minimumConnectionFieldsArePresent
                 {
-                    state.taskProviderErrorMessage = "App ID, app secret, app token, and table ID are required."
+                    state.taskProviderErrorMessage = String(localized: "error.feishuFieldsRequired", bundle: .localized)
                     return .none
                 }
 
@@ -194,8 +194,8 @@ struct AppFeature {
                 let configuration = state.pipeline.preferences.taskProviderConfiguration
                 guard configuration.canFetchTasks else {
                     state.taskProviderErrorMessage = configuration.kind == .feishu
-                        ? "Configure Feishu App ID, secret, app token, and table ID first."
-                        : "Local task provider is not ready."
+                        ? String(localized: "error.configureFeishu", bundle: .localized)
+                        : String(localized: "error.localProviderNotReady", bundle: .localized)
                     return .none
                 }
 
@@ -269,7 +269,7 @@ struct AppFeature {
 
             case let .createLocalTaskButtonTapped(draft):
                 guard state.pipeline.preferences.taskProviderConfiguration.kind == .local else {
-                    state.taskProviderErrorMessage = "Local task creation is only available for the Local Tasks provider."
+                    state.taskProviderErrorMessage = String(localized: "error.localTaskOnlyLocal", bundle: .localized)
                     return .none
                 }
 
@@ -309,7 +309,7 @@ struct AppFeature {
                         in: state.runs
                     ) {
                         guard activeRun.taskID == task.id else {
-                            state.taskProviderErrorMessage = "Finish the current run in this pipeline before starting another task."
+                            state.taskProviderErrorMessage = String(localized: "error.finishCurrentRun", bundle: .localized)
                             return .none
                         }
                     }
@@ -360,7 +360,7 @@ struct AppFeature {
             case .markSelectedTaskDoneButtonTapped:
                 guard let task = selectedTask(state: state) else { return .none }
                 guard state.pipeline.preferences.taskProviderConfiguration.canFetchTasks else {
-                    state.taskProviderErrorMessage = "Configure the selected task provider before writing status back."
+                    state.taskProviderErrorMessage = String(localized: "error.configureProvider", bundle: .localized)
                     return .none
                 }
 
@@ -385,7 +385,7 @@ struct AppFeature {
             case .markSelectedTaskFailedButtonTapped:
                 guard let task = selectedTask(state: state) else { return .none }
                 guard state.pipeline.preferences.taskProviderConfiguration.canFetchTasks else {
-                    state.taskProviderErrorMessage = "Configure the selected task provider before writing status back."
+                    state.taskProviderErrorMessage = String(localized: "error.configureProvider", bundle: .localized)
                     return .none
                 }
 

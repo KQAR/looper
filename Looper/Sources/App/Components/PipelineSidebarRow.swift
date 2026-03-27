@@ -6,6 +6,8 @@ struct PipelineSidebarRow: View {
     let taskCount: Int
     let activeRunTitle: String?
 
+    private let lang = AppLanguageManager.shared
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
@@ -21,7 +23,7 @@ struct PipelineSidebarRow: View {
                 .font(.footnote.monospaced())
                 .foregroundStyle(.secondary)
 
-            Text("\(taskCount) linked tasks")
+            Text(String(localized: "sidebar.linkedTasks \(taskCount)", bundle: lang.bundle))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

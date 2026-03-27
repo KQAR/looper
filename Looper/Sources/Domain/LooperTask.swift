@@ -16,14 +16,19 @@ struct LooperTask: Codable, Equatable, Identifiable, Sendable {
 
         var label: String {
             switch self {
-            case .pending:
-                "Pending"
-            case .developing:
-                "Running"
-            case .done:
-                "Done"
-            case .failed:
-                "Failed"
+            case .pending: "Pending"
+            case .developing: "Running"
+            case .done: "Done"
+            case .failed: "Failed"
+            }
+        }
+
+        func localizedLabel(bundle: Bundle) -> String {
+            switch self {
+            case .pending: String(localized: "status.pending", bundle: bundle)
+            case .developing: String(localized: "status.running", bundle: bundle)
+            case .done: String(localized: "status.done", bundle: bundle)
+            case .failed: String(localized: "status.failed", bundle: bundle)
             }
         }
     }

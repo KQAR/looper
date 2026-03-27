@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var selectedSection: SettingsSection? = .general
     @Namespace private var sidebarSelectionAnimation
     @Environment(\.updater) private var updater
+    private let lang = AppLanguageManager.shared
 
     var body: some View {
         NavigationSplitView {
@@ -53,7 +54,7 @@ struct SettingsView: View {
                     .font(.system(size: 17, weight: .semibold))
                     .frame(width: 22)
 
-                Text(section.title)
+                Text(section.titleKey, bundle: lang.bundle)
                     .font(.title3.weight(.semibold))
 
                 Spacer(minLength: 0)
@@ -86,27 +87,22 @@ struct SettingsView: View {
         Button {
             updater?.checkForUpdates()
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: "arrow.up.circle")
-                    .font(.system(size: 13, weight: .medium))
-                    .frame(width: 16)
+                    .font(.system(size: 11, weight: .medium))
 
-                Text("Check for Updates")
-                    .font(.body.weight(.semibold))
+                Text("settings.checkForUpdates", bundle: lang.bundle)
+                    .font(.caption.weight(.medium))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.9)
-
-                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .disabled(updater?.canCheckForUpdates != true)
-        .help("Check for Updates")
+        .help(Text("settings.checkForUpdates", bundle: lang.bundle))
     }
 
     @ViewBuilder
@@ -114,9 +110,9 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(section.title)
+                    Text(section.titleKey, bundle: lang.bundle)
                         .font(.largeTitle.weight(.bold))
-                    Text(section.subtitle)
+                    Text(section.subtitleKey, bundle: lang.bundle)
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
@@ -132,7 +128,7 @@ struct SettingsView: View {
                         .contentShape(.circle)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Close Settings")
+                .accessibilityLabel(Text("settings.closeSettings", bundle: lang.bundle))
                 .glassEffect(.regular.interactive(), in: .circle)
             }
 
@@ -148,13 +144,37 @@ struct SettingsView: View {
     }
 
     private var generalSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("General settings will be redesigned here.")
-                .font(.body.weight(.medium))
+        VStack(alignment: .leading, spacing: 20) {
+            languagePicker
 
-            Text("This section is reserved for future app-level preferences and behavior controls.")
-                .font(.body)
-                .foregroundStyle(.secondary)
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("settings.general.placeholder", bundle: lang.bundle)
+                    .font(.body.weight(.medium))
+
+                Text("settings.general.placeholderDetail", bundle: lang.bundle)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var languagePicker: some View {
+        LabeledContent {
+            Picker(selection: Binding(
+                get: { lang.selected },
+                set: { lang.selected = $0 }
+            )) {
+                ForEach(AppLanguage.allCases) { language in
+                    Text(language.displayName(bundle: lang.bundle)).tag(language)
+                }
+            } label: {
+                EmptyView()
+            }
+            .frame(width: 200)
+        } label: {
+            Text("settings.language", bundle: lang.bundle)
         }
     }
 
@@ -163,8 +183,16 @@ struct SettingsView: View {
             Text("Looper")
                 .font(.title2.weight(.semibold))
 
-            LabeledContent("Version", value: appVersion)
-            LabeledContent("Build", value: appBuild)
+            LabeledContent {
+                Text(appVersion)
+            } label: {
+                Text("settings.version", bundle: lang.bundle)
+            }
+            LabeledContent {
+                Text(appBuild)
+            } label: {
+                Text("settings.build", bundle: lang.bundle)
+            }
             LabeledContent("Bundle ID", value: Bundle.main.bundleIdentifier ?? "com.jarvis.looper")
         }
         .foregroundStyle(.primary)
@@ -198,30 +226,24 @@ private enum SettingsSection: String, CaseIterable, Hashable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
+    var titleKey: LocalizedStringKey {
         switch self {
-        case .general:
-            return "通用"
-        case .about:
-            return "关于"
+        case .general: "settings.general"
+        case .about: "settings.about"
         }
     }
 
-    var subtitle: String {
+    var subtitleKey: LocalizedStringKey {
         switch self {
-        case .general:
-            return "Application behavior and defaults."
-        case .about:
-            return "Version information and app metadata."
+        case .general: "settings.general.subtitle"
+        case .about: "settings.about.subtitle"
         }
     }
 
     var symbolName: String {
         switch self {
-        case .general:
-            return "slider.horizontal.3"
-        case .about:
-            return "info.circle"
+        case .general: "slider.horizontal.3"
+        case .about: "info.circle"
         }
     }
 }
