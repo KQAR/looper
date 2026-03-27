@@ -9,9 +9,10 @@ struct AppView: View {
 
     @Bindable var store: StoreOf<AppFeature>
     let terminalRegistry: PipelineTerminalRegistry
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             pipelineSidebar
                 .navigationSplitViewColumnWidth(min: 260, ideal: 310, max: 360)
         } detail: {
@@ -19,7 +20,8 @@ struct AppView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(workspaceBackground)
         }
-        .navigationSplitViewStyle(.balanced)
+        .navigationSplitViewStyle(.prominentDetail)
+        .animation(.smooth(duration: 0.32, extraBounce: 0), value: columnVisibility)
         .background(WindowChromeConfigurator())
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -51,7 +53,7 @@ struct AppView: View {
             )
         ) {
             SettingsView(store: store)
-                .frame(width: 820, height: 760)
+                .frame(width: 800, height: 600)
         }
         .sheet(
             isPresented: Binding(
@@ -115,6 +117,28 @@ struct AppView: View {
             }
         }
         .listStyle(.sidebar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
+                Text("Looper")
+                    .font(.title)
+                    .fontWeight(.semibold)
+                
+                Spacer()
+
+                Button {
+                    store.send(.newPipelineButtonTapped)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("New Pipeline")
+            }
+            .padding(.top, 8)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 4)
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             Color.clear
                 .frame(height: 44)
@@ -131,15 +155,6 @@ struct AppView: View {
             .help("Settings")
             .padding(.leading, 12)
             .padding(.bottom, 12)
-        }
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    store.send(.newPipelineButtonTapped)
-                } label: {
-                    Label("New Pipeline", systemImage: "plus")
-                }
-            }
         }
     }
 
