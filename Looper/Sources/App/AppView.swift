@@ -90,6 +90,23 @@ struct AppView: View {
         } message: {
             Text(store.taskProviderErrorMessage ?? "")
         }
+        .confirmationDialog(
+            String(localized: "context.deleteConfirm.title", bundle: lang.bundle),
+            isPresented: Binding(
+                get: { store.pipelinePendingDeletionID != nil },
+                set: { if !$0 { store.send(.cancelDeletePipeline) } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(String(localized: "context.deleteConfirm.delete", bundle: lang.bundle), role: .destructive) {
+                store.send(.confirmDeletePipeline)
+            }
+            Button(String(localized: "context.deleteConfirm.cancel", bundle: lang.bundle), role: .cancel) {
+                store.send(.cancelDeletePipeline)
+            }
+        } message: {
+            Text("context.deleteConfirm.message", bundle: lang.bundle)
+        }
         .onAppear {
             store.send(.onAppear)
         }
@@ -180,6 +197,27 @@ struct AppView: View {
             .contentShape(.rect(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                store.send(.pipeline(.revealPipelineInFinderButtonTapped(pipeline.id)))
+            } label: {
+                Label(String(localized: "context.revealInFinder", bundle: lang.bundle), systemImage: "folder")
+            }
+
+            Button {
+                store.send(.pipeline(.rebuildPipelineButtonTapped(pipeline.id)))
+            } label: {
+                Label(String(localized: "context.rebuildTerminal", bundle: lang.bundle), systemImage: "terminal")
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                store.send(.deletePipelineMenuTapped(pipeline.id))
+            } label: {
+                Label(String(localized: "context.deletePipeline", bundle: lang.bundle), systemImage: "trash")
+            }
+        }
     }
 
     @ViewBuilder

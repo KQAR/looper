@@ -49,10 +49,14 @@ struct AppFeature {
         var isSavingSettings = false
         var isLocalTaskComposerPresented = false
         var isCreatingLocalTask = false
+        var pipelinePendingDeletionID: Pipeline.ID?
         var pipeline = PipelineFeature.State()
     }
 
     enum Action {
+        case cancelDeletePipeline
+        case confirmDeletePipeline
+        case deletePipelineMenuTapped(Pipeline.ID)
         case dismissTaskProviderError
         case dismissSettingsButtonTapped
         case dismissLocalTaskComposerButtonTapped
@@ -89,6 +93,19 @@ struct AppFeature {
 
         Reduce { state, action in
             switch action {
+            case let .deletePipelineMenuTapped(id):
+                state.pipelinePendingDeletionID = id
+                return .none
+
+            case .confirmDeletePipeline:
+                guard let id = state.pipelinePendingDeletionID else { return .none }
+                state.pipelinePendingDeletionID = nil
+                return .send(.pipeline(.removePipelineButtonTapped(id)))
+
+            case .cancelDeletePipeline:
+                state.pipelinePendingDeletionID = nil
+                return .none
+
             case .onAppear:
                 return .merge(
                     .send(.pipeline(.onAppear)),
