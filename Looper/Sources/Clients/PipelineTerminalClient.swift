@@ -7,6 +7,7 @@ struct PipelineTerminalClient {
     var removeSession: @Sendable (UUID) async -> Void
     var focusSession: @Sendable (UUID) async -> Void
     var bootstrapSession: @Sendable (UUID) async -> Void
+    var attachSessionIfNeeded: @Sendable (UUID) async -> Void
     var rebuildSession: @Sendable (Pipeline) async -> Void
     var events: @Sendable () async -> AsyncStream<PipelineTerminalEvent> = {
         AsyncStream { continuation in
@@ -44,6 +45,11 @@ extension PipelineTerminalClient: DependencyKey {
                 PipelineTerminalRegistry.shared.session(id: id)?.scheduleAttach()
             }
         },
+        attachSessionIfNeeded: { id in
+            await MainActor.run {
+                PipelineTerminalRegistry.shared.session(id: id)?.markShouldAttach()
+            }
+        },
         rebuildSession: { pipeline in
             await MainActor.run {
                 PipelineTerminalRegistry.shared.rebuildSession(for: pipeline)
@@ -61,6 +67,7 @@ extension PipelineTerminalClient: DependencyKey {
         removeSession: { _ in },
         focusSession: { _ in },
         bootstrapSession: { _ in },
+        attachSessionIfNeeded: { _ in },
         rebuildSession: { _ in },
         events: {
             AsyncStream { continuation in

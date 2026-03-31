@@ -50,37 +50,20 @@ struct Pipeline: Equatable, Identifiable, Sendable {
 
     var attachScript: String {
         let escapedExecutionPath = executionPath.shellQuoted
-        let escapedSession = tmuxSessionName.shellQuoted
         let command = agentCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         let escapedStatusFile = exitStatusFileURL.path.shellQuoted
 
         if command.isEmpty {
-            return """
-            if command -v tmux >/dev/null 2>&1; then
-              tmux new-session -A -s \(escapedSession) -c \(escapedExecutionPath)
-            else
-              cd \(escapedExecutionPath)
-            fi
-            """
+            return "cd \(escapedExecutionPath)"
         }
 
-        let wrappedLaunchScript = """
-        rm -f \(escapedStatusFile)
-        cd \(escapedExecutionPath) && \(command)
-        status=$?
-        printf '%s' "$status" > \(escapedStatusFile)
-        exit "$status"
+        let wrappedScript = """
+        rm -f \(escapedStatusFile); \
+        cd \(escapedExecutionPath) && \(command); \
+        s=$?; printf '%s' "$s" > \(escapedStatusFile); exit "$s"
         """
-        let escapedWrappedLaunchScript = wrappedLaunchScript.shellQuoted
 
-        return """
-        if command -v tmux >/dev/null 2>&1; then
-          tmux has-session -t \(escapedSession) 2>/dev/null || tmux new-session -d -s \(escapedSession) -c \(escapedExecutionPath) /bin/zsh -lc \(escapedWrappedLaunchScript)
-          tmux attach-session -t \(escapedSession)
-        else
-          /bin/zsh -lc \(escapedWrappedLaunchScript)
-        fi
-        """
+        return "/bin/zsh -lc \(wrappedScript.shellQuoted)"
     }
 }
 

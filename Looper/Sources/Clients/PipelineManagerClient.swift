@@ -34,12 +34,7 @@ extension PipelineManagerClient: DependencyKey {
                 )
             )
         },
-        removePipeline: { pipeline in
-            _ = try? ProcessIO.run(
-                executableURL: URL(fileURLWithPath: "/usr/bin/env"),
-                arguments: ["tmux", "kill-session", "-t", pipeline.tmuxSessionName]
-            )
-        },
+        removePipeline: { _ in },
         revealInFinder: { path in
             await MainActor.run {
                 _ = NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)

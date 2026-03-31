@@ -10,6 +10,7 @@ struct AppView: View {
     @Bindable var store: StoreOf<AppFeature>
     let terminalRegistry: PipelineTerminalRegistry
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var expandedTerminalPipelineID: UUID?
     private let lang = AppLanguageManager.shared
 
     var body: some View {
@@ -26,16 +27,14 @@ struct AppView: View {
         .background(WindowChromeConfigurator())
         .toolbar {
             ToolbarItem(placement: .principal) {
-                if let selectedPipeline {
-                    Text(selectedPipeline.name)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                Text(toolbarTitle)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             .sharedBackgroundVisibility(.hidden)
 
-            if selectedPipeline != nil {
+            if hasPipelines {
                 ToolbarItem(placement: .primaryAction) {
                     refreshTasksToolbarButton
                 }
@@ -112,6 +111,8 @@ struct AppView: View {
         }
     }
 
+    // MARK: - Sidebar
+
     private var pipelineSidebar: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 4) {
@@ -121,6 +122,10 @@ struct AppView: View {
                     .textCase(.uppercase)
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
+
+                if hasPipelines {
+                    allPipelinesSidebarButton
+                }
 
                 ForEach(store.pipeline.pipelines) { pipeline in
                     pipelineSidebarButton(for: pipeline)
@@ -175,8 +180,42 @@ struct AppView: View {
         }
     }
 
+    private var allPipelinesSidebarButton: some View {
+        let isSelected = isAllPipelinesMode
+
+        return Button {
+            store.send(.pipeline(.selectPipeline(nil)))
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("sidebar.allPipelines", bundle: lang.bundle)
+                        .font(.headline)
+                    Spacer()
+                    if activeRunCount > 0 {
+                        AppStatusBadge(title: "\(activeRunCount) active")
+                    }
+                }
+
+                Text(String(localized: "sidebar.linkedTasks \(store.tasks.count)", bundle: lang.bundle))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                isSelected
+                    ? RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.2))
+                    : nil
+            )
+            .contentShape(.rect(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
     private func pipelineSidebarButton(for pipeline: Pipeline) -> some View {
-        let isSelected = store.pipeline.selectedPipelineID == pipeline.id
+        let isSelected = !isAllPipelinesMode && store.pipeline.selectedPipelineID == pipeline.id
 
         return Button {
             store.send(.pipeline(.selectPipeline(pipeline.id)))
@@ -220,26 +259,29 @@ struct AppView: View {
         }
     }
 
+    // MARK: - Workspace
+
     @ViewBuilder
     private var workspace: some View {
-        if let pipeline = selectedPipeline {
-            GeometryReader { geometry in
-                VStack(alignment: .leading, spacing: 16) {
-                    taskBoard(for: pipeline)
-
-                    if shouldDisplayTerminal {
-                        terminalWorkspace(for: pipeline)
-                    }
+        if hasPipelines {
+            ZStack {
+                GeometryReader { geometry in
+                    taskBoard(for: selectedPipeline)
+                        .padding(.horizontal, workspaceHorizontalInset)
+                        .padding(.bottom, workspaceBottomInset)
+                        .padding(.top, 0)
+                        .frame(
+                            maxWidth: .infinity,
+                            maxHeight: .infinity,
+                            alignment: .topLeading
+                        )
+                        .frame(minHeight: geometry.size.height, alignment: .topLeading)
                 }
-                .padding(.horizontal, workspaceHorizontalInset)
-                .padding(.bottom, workspaceBottomInset)
-                .padding(.top, 0)
-                .frame(
-                    maxWidth: .infinity,
-                    maxHeight: .infinity,
-                    alignment: .topLeading
-                )
-                .frame(minHeight: geometry.size.height, alignment: .topLeading)
+
+                expandedTerminalOverlay
+                    .opacity(isTerminalOverlayVisible ? 1 : 0)
+                    .allowsHitTesting(isTerminalOverlayVisible)
+                    .animation(.easeInOut(duration: 0.2), value: isTerminalOverlayVisible)
             }
             .background(.regularMaterial)
         } else {
@@ -267,7 +309,7 @@ struct AppView: View {
         }
     }
 
-    private func taskBoard(for pipeline: Pipeline) -> some View {
+    private func taskBoard(for pipeline: Pipeline?) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: boardColumnSpacing) {
                 boardColumn(
@@ -281,7 +323,8 @@ struct AppView: View {
                     title: String(localized: "board.developing.title", bundle: lang.bundle),
                     subtitle: String(localized: "board.developing.subtitle", bundle: lang.bundle),
                     tasks: boardTasks(for: pipeline, statuses: [.developing]),
-                    emptyMessage: String(localized: "board.developing.empty", bundle: lang.bundle)
+                    emptyMessage: String(localized: "board.developing.empty", bundle: lang.bundle),
+                    sessionForTask: { task in terminalSession(for: task) }
                 )
 
                 boardColumn(
@@ -311,7 +354,8 @@ struct AppView: View {
         title: String,
         subtitle: String,
         tasks: [LooperTask],
-        emptyMessage: String
+        emptyMessage: String,
+        sessionForTask: ((LooperTask) -> PipelineTerminalSession?)? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
@@ -326,35 +370,55 @@ struct AppView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                VStack(spacing: 10) {
-                    ForEach(tasks) { task in
-                        TaskBoardCard(
-                            task: task,
-                            isSelected: task.id == selectedPipelineTask?.id,
-                            isUpdating: store.updatingTaskIDs.contains(task.id),
-                            onSelect: {
-                                store.send(.selectTask(task.id))
-                            },
-                            onStart: task.status == .pending
-                                ? {
+                ScrollView {
+                    VStack(spacing: 10) {
+                        ForEach(tasks) { task in
+                            let session = sessionForTask?(task)
+                            let taskPipelineID = pipelineForTask(task)?.id
+                            let hasSession = session != nil
+                            TaskBoardCard(
+                                task: task,
+                                isSelected: task.id == selectedPipelineTask?.id,
+                                isUpdating: store.updatingTaskIDs.contains(task.id),
+                                hasTerminal: hasSession,
+                                isTerminalExpanded: taskPipelineID != nil && taskPipelineID == expandedTerminalPipelineID,
+                                onSelect: {
                                     store.send(.selectTask(task.id))
-                                    store.send(.startSelectedTaskButtonTapped)
-                                } : nil,
-                            onMarkDone: task.status == .developing
-                                ? {
-                                    store.send(.selectTask(task.id))
-                                    store.send(
-                                        .markSelectedTaskDoneButtonTapped
-                                    )
-                                } : nil,
-                            onMarkFailed: task.status == .developing
-                                ? {
-                                    store.send(.selectTask(task.id))
-                                    store.send(
-                                        .markSelectedTaskFailedButtonTapped
-                                    )
-                                } : nil
-                        )
+                                },
+                                onStart: task.status == .pending
+                                    ? {
+                                        store.send(.selectTask(task.id))
+                                        store.send(.startSelectedTaskButtonTapped)
+                                    } : nil,
+                                onMarkDone: task.status == .developing
+                                    ? {
+                                        store.send(.selectTask(task.id))
+                                        store.send(
+                                            .markSelectedTaskDoneButtonTapped
+                                        )
+                                    } : nil,
+                                onMarkFailed: task.status == .developing
+                                    ? {
+                                        store.send(.selectTask(task.id))
+                                        store.send(
+                                            .markSelectedTaskFailedButtonTapped
+                                        )
+                                    } : nil,
+                                onAttach: hasSession
+                                    ? {
+                                        if let pipeline = pipelineForTask(task) {
+                                            store.send(.pipeline(.selectPipeline(pipeline.id)))
+                                            store.send(.pipeline(.attachSelectedPipelineButtonTapped))
+                                        }
+                                    } : nil,
+                                onExpandTerminal: hasSession
+                                    ? {
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            expandedTerminalPipelineID = taskPipelineID
+                                        }
+                                    } : nil
+                            )
+                        }
                     }
                 }
             }
@@ -368,76 +432,44 @@ struct AppView: View {
         .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 20))
     }
 
-    @ViewBuilder
-    private func terminalWorkspace(for pipeline: Pipeline) -> some View {
-        if let session = activeSession {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("workspace.title", bundle: lang.bundle)
-                        .font(.headline)
-                    Spacer()
-                    Button {
-                        store.send(
-                            .pipeline(.attachSelectedPipelineButtonTapped)
-                        )
-                    } label: {
-                        Label {
-                            Text("workspace.attach", bundle: lang.bundle)
-                        } icon: {
-                            Image(systemName: "terminal")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                }
 
-                PipelineTerminalRepresentable(session: session)
-                    .clipShape(.rect(cornerRadius: 22))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 22)
-                            .strokeBorder(.quaternary, lineWidth: 1)
-                    }
-                    .background(
-                        Color.black.opacity(0.92),
-                        in: .rect(cornerRadius: 22)
-                    )
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .background(
-                Color.primary.opacity(0.04),
-                in: .rect(cornerRadius: 18)
-            )
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                panelHeader(
-                    title: String(localized: "workspace.title", bundle: lang.bundle),
-                    subtitle: String(localized: "workspace.startingSession", bundle: lang.bundle)
-                )
+    private var expandedTerminalOverlay: some View {
+        let sessionName = expandedTerminalPipelineID
+            .flatMap { terminalRegistry.session(id: $0) }?.displayTitle ?? ""
 
-                ProgressView {
-                    Text("workspace.preparingTerminal", bundle: lang.bundle)
-                }
-                    .controlSize(.small)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                HStack {
-                    Spacer()
-                    Button(String(localized: "workspace.attachAgain", bundle: lang.bundle)) {
-                        store.send(
-                            .pipeline(.attachSelectedPipelineButtonTapped)
-                        )
+        return VStack(spacing: 0) {
+            HStack {
+                Text(sessionName)
+                    .font(.headline)
+                Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        expandedTerminalPipelineID = nil
                     }
-                    .buttonStyle(.bordered)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .background(
-                Color.primary.opacity(0.04),
-                in: .rect(cornerRadius: 18)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            TerminalHostRepresentable(
+                registry: terminalRegistry,
+                activeSessionID: expandedTerminalPipelineID
             )
+            .clipShape(.rect(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(.quaternary, lineWidth: 1)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
         }
+        .background(.ultraThinMaterial, in: .rect(cornerRadius: 16))
+        .padding(24)
     }
 
     @ViewBuilder
@@ -460,6 +492,30 @@ struct AppView: View {
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
+    }
+
+    // MARK: - Computed Properties
+
+    private var hasPipelines: Bool {
+        !store.pipeline.pipelines.isEmpty
+    }
+
+    private var isTerminalOverlayVisible: Bool {
+        expandedTerminalPipelineID != nil
+    }
+
+    private var isAllPipelinesMode: Bool {
+        store.pipeline.selectedPipelineID == nil && hasPipelines
+    }
+
+    private var toolbarTitle: String {
+        if let selectedPipeline {
+            return selectedPipeline.name
+        }
+        if isAllPipelinesMode {
+            return String(localized: "sidebar.allPipelines", bundle: lang.bundle)
+        }
+        return ""
     }
 
     private var sidebarFooter: String {
@@ -512,46 +568,28 @@ struct AppView: View {
     }
 
     private var selectedPipelineTask: LooperTask? {
-        guard let selectedPipeline else { return nil }
         guard let selectedTaskID = store.selectedTaskID,
             let task = store.tasks[id: selectedTaskID]
         else {
             return nil
         }
+
+        // In "all pipelines" mode, any task is valid
+        guard let selectedPipeline else {
+            return task
+        }
+
         return pipelineMatchesTask(selectedPipeline, task: task) ? task : nil
     }
 
-    private var selectedSession: PipelineTerminalSession? {
-        guard let selectedPipeline else { return nil }
-        return terminalRegistry.session(id: selectedPipeline.id)
+    private func terminalSession(for task: LooperTask) -> PipelineTerminalSession? {
+        guard task.status == .developing else { return nil }
+        guard let pipeline = pipelineForTask(task) else { return nil }
+        return terminalRegistry.session(id: pipeline.id)
     }
 
-    private var activeSession: PipelineTerminalSession? {
-        guard shouldDisplayTerminal else { return nil }
-        return selectedSession
-    }
-
-    private var currentRun: Run? {
-        guard let selectedPipeline else { return nil }
-
-        if let selectedPipelineTask,
-            let matchingRun = store.runs.first(where: {
-                $0.pipelineID == selectedPipeline.id
-                    && $0.taskID == selectedPipelineTask.id && $0.isActive
-            })
-        {
-            return matchingRun
-        }
-
-        return store.runs.first(where: { $0.pipelineID == selectedPipeline.id })
-    }
-
-    private var shouldDisplayTerminal: Bool {
-        if currentRun?.isActive == true {
-            return true
-        }
-
-        return selectedPipelineTask?.status == .developing
+    private func pipelineForTask(_ task: LooperTask) -> Pipeline? {
+        store.pipeline.pipelines.first(where: { pipelineMatchesTask($0, task: task) })
     }
 
     private var canCreateLocalTask: Bool {
@@ -568,16 +606,23 @@ struct AppView: View {
         }
     }
 
+    private var activeRunCount: Int {
+        store.runs.filter(\.isActive).count
+    }
+
     private func pipelineTasks(for pipeline: Pipeline) -> [LooperTask] {
         store.tasks.filter { pipelineMatchesTask(pipeline, task: $0) }
     }
 
     private func boardTasks(
-        for pipeline: Pipeline,
+        for pipeline: Pipeline?,
         statuses: [LooperTask.Status]
     ) -> [LooperTask] {
-        pipelineTasks(for: pipeline)
-            .filter { statuses.contains($0.status) }
+        if let pipeline {
+            return pipelineTasks(for: pipeline)
+                .filter { statuses.contains($0.status) }
+        }
+        return store.tasks.filter { statuses.contains($0.status) }
     }
 
     private func pipelineMatchesTask(_ pipeline: Pipeline, task: LooperTask)

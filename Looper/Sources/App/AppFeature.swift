@@ -262,7 +262,13 @@ struct AppFeature {
                 if let selectedTaskID = state.selectedTaskID,
                    state.tasks[id: selectedTaskID] != nil
                 {
-                    return syncPipelineSelection(state: &state)
+                    let selectionEffect = syncPipelineSelection(state: &state)
+                    let attachEffect = attachTerminalsForDevelopingTasks(
+                        tasks: tasks,
+                        pipelines: state.pipeline.pipelines,
+                        attachSession: pipelineTerminalClient.attachSessionIfNeeded
+                    )
+                    return .merge(selectionEffect, attachEffect)
                 }
 
                 if let matchingTaskID = taskIDMatchingSelectedPipeline(state: state) {
@@ -273,7 +279,13 @@ struct AppFeature {
                     state.selectedTaskID = state.tasks.ids.first
                 }
 
-                return syncPipelineSelection(state: &state)
+                let selectionEffect = syncPipelineSelection(state: &state)
+                let attachEffect = attachTerminalsForDevelopingTasks(
+                    tasks: tasks,
+                    pipelines: state.pipeline.pipelines,
+                    attachSession: pipelineTerminalClient.attachSessionIfNeeded
+                )
+                return .merge(selectionEffect, attachEffect)
 
             case let .taskResponse(.failure(error)):
                 state.isLoadingTasks = false
@@ -875,4 +887,31 @@ private func bestFieldMatch(
     }
 
     return nil
+}
+
+private func attachTerminalsForDevelopingTasks(
+    tasks: [LooperTask],
+    pipelines: IdentifiedArrayOf<Pipeline>,
+    attachSession: @escaping @Sendable (UUID) async -> Void
+) -> Effect<AppFeature.Action> {
+    let developingTasks = tasks.filter { $0.status == .developing }
+    let developingPipelineIDs: Set<UUID> = Set(
+        developingTasks.compactMap { task in
+            pipelineID(for: task, in: pipelines)
+        }
+    )
+
+    guard !developingPipelineIDs.isEmpty else {
+        print("[AppFeature] no developing tasks found (total tasks=\(tasks.count))")
+        return .none
+    }
+
+    print("[AppFeature] attaching terminals for \(developingPipelineIDs.count) pipelines with developing tasks")
+
+    return .run { _ in
+        for id in developingPipelineIDs {
+            print("[AppFeature] calling attachSessionIfNeeded for pipeline \(id.uuidString.prefix(8))")
+            await attachSession(id)
+        }
+    }
 }

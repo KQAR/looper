@@ -2,6 +2,9 @@ import AppKit
 import Foundation
 import GhosttyTerminal
 import Observation
+import os
+
+private let logger = Logger(subsystem: "com.looper", category: "Terminal")
 
 @MainActor
 @Observable
@@ -9,7 +12,28 @@ final class PipelineTerminalRegistry {
     static let shared = PipelineTerminalRegistry()
 
     private(set) var sessions: [UUID: PipelineTerminalSession] = [:]
+    private(set) var terminalHost: TerminalHostView?
     private var eventContinuations: [UUID: AsyncStream<PipelineTerminalEvent>.Continuation] = [:]
+
+    func setTerminalHost(_ host: TerminalHostView) {
+        guard terminalHost == nil else {
+            logger.info("[Registry] terminalHost already set, ignoring duplicate")
+            return
+        }
+        terminalHost = host
+        logger.info("[Registry] terminalHost set, sessions=\(self.sessions.count)")
+
+        // Defer terminal creation until the host is in a window
+        // (SwiftUI calls makeNSView before adding to window)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            logger.info("[Registry] deferred terminal creation, hostInWindow=\(host.window != nil)")
+            for (id, session) in self.sessions {
+                logger.info("[Registry] creating persistent terminal for pipeline \(id.uuidString.prefix(8))")
+                session.createPersistentTerminalIfNeeded(in: host)
+            }
+        }
+    }
 
     func upsertSession(for pipeline: Pipeline) {
         if let session = sessions[pipeline.id] {
@@ -17,15 +41,25 @@ final class PipelineTerminalRegistry {
             return
         }
 
-        sessions[pipeline.id] = PipelineTerminalSession(pipeline: pipeline) { [weak self] event in
+        let session = PipelineTerminalSession(pipeline: pipeline) { [weak self] event in
             self?.broadcast(event)
+        }
+        sessions[pipeline.id] = session
+
+        if let terminalHost, terminalHost.window != nil {
+            session.createPersistentTerminalIfNeeded(in: terminalHost)
         }
     }
 
     func rebuildSession(for pipeline: Pipeline) {
         sessions[pipeline.id]?.invalidate()
-        sessions[pipeline.id] = PipelineTerminalSession(pipeline: pipeline) { [weak self] event in
+        let session = PipelineTerminalSession(pipeline: pipeline) { [weak self] event in
             self?.broadcast(event)
+        }
+        sessions[pipeline.id] = session
+
+        if let terminalHost, terminalHost.window != nil {
+            session.createPersistentTerminalIfNeeded(in: terminalHost)
         }
     }
 
@@ -90,6 +124,8 @@ final class PipelineTerminalSession: NSObject {
     private(set) var surfaceSize: TerminalGridMetrics?
     private(set) var isFocused: Bool = false
     private(set) var phase: Phase = .idle
+    private(set) var persistentTerminal: AppTerminalView?
+    private(set) var shouldAttachWhenReady = false
 
     let controller: TerminalController
     let configuration: TerminalSurfaceOptions
@@ -125,6 +161,40 @@ final class PipelineTerminalSession: NSObject {
         title.isEmpty ? pipeline.name : title
     }
 
+    func createPersistentTerminalIfNeeded(in hostView: TerminalHostView) {
+        guard persistentTerminal == nil else {
+            logger.info("[Session:\(self.pipeline.name)] persistentTerminal already exists, skipping")
+            return
+        }
+        let terminal = AppTerminalView(
+            frame: NSRect(origin: .zero, size: CGSize(width: 640, height: 400))
+        )
+        terminal.delegate = self
+        terminal.controller = controller
+        terminal.configuration = configuration
+        persistentTerminal = terminal
+        terminalView = terminal
+
+        // Add to host — terminal stays here forever, visibility controlled by isHidden
+        hostView.addTerminal(terminal)
+
+        logger.info("[Session:\(self.pipeline.name)] persistentTerminal created, inWindow=\(terminal.window != nil), shouldAttach=\(self.shouldAttachWhenReady)")
+
+        if shouldAttachWhenReady {
+            logger.info("[Session:\(self.pipeline.name)] auto-attaching (shouldAttachWhenReady=true)")
+            scheduleAttachIfNeeded()
+        }
+    }
+
+    func markShouldAttach() {
+        shouldAttachWhenReady = true
+        let hasTerminal = persistentTerminal != nil
+        logger.info("[Session:\(self.pipeline.name)] markShouldAttach, hasTerminal=\(hasTerminal), didAttemptAttach=\(self.didAttemptAttach)")
+        if hasTerminal {
+            scheduleAttachIfNeeded()
+        }
+    }
+
     func updatePipeline(_ pipeline: Pipeline) {
         self.pipeline = pipeline
     }
@@ -148,15 +218,24 @@ final class PipelineTerminalSession: NSObject {
     func invalidate() {
         attachTask?.cancel()
         attachTask = nil
+        persistentTerminal?.removeFromSuperview()
+        persistentTerminal = nil
         terminalView = nil
     }
 
     private func scheduleAttachIfNeeded() {
-        guard !didAttemptAttach else { return }
-        guard terminalView != nil else { return }
+        guard !didAttemptAttach else {
+            logger.info("[Session:\(self.pipeline.name)] scheduleAttach skipped (already attempted)")
+            return
+        }
+        guard terminalView != nil else {
+            logger.warning("[Session:\(self.pipeline.name)] scheduleAttach skipped (no terminalView)")
+            return
+        }
 
         didAttemptAttach = true
         phase = .bootstrapping
+        logger.info("[Session:\(self.pipeline.name)] scheduling attach script (450ms delay)")
 
         attachTask?.cancel()
         attachTask = Task { [weak self] in
@@ -169,17 +248,24 @@ final class PipelineTerminalSession: NSObject {
 
     private func sendAttachScript() {
         guard let terminalView else {
+            logger.warning("[Session:\(self.pipeline.name)] sendAttachScript failed (no terminalView)")
             didAttemptAttach = false
             phase = .idle
             return
         }
 
+        let inWindow = terminalView.window != nil
+        let script = pipeline.attachScript
+        logger.info("[Session:\(self.pipeline.name)] sending attach script, inWindow=\(inWindow), scriptLen=\(script.count)")
+        logger.debug("[Session:\(self.pipeline.name)] script=\(script)")
+
         terminalView.window?.makeFirstResponder(terminalView)
         terminalView.insertText(
-            pipeline.attachScript + "\n",
+            script + "\n",
             replacementRange: NSRange(location: NSNotFound, length: 0)
         )
         phase = .attached
+        logger.info("[Session:\(self.pipeline.name)] attach script sent, phase=attached")
     }
 }
 
