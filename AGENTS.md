@@ -34,25 +34,40 @@ Use `XcodeBuildMCP` MCP server for Xcode build diagnostics, simulator management
 
 ### Domain Model
 
-- **Pipeline**: long-lived project workstation. Holds project path, execution path, default agent command, terminal session, and execution preferences.
+- **Pipeline**: long-lived project workstation. Holds project path, default agent command, active runs, and execution preferences (including `maxConcurrentRuns`).
 - **Task**: unit of work from a provider (`Local Tasks`, `Feishu`, later others).
-- **Run**: one execution of one task inside one pipeline. Can succeed, fail, or be resumed.
+- **Run**: one execution of one task inside one pipeline. Each Run has its own git worktree, terminal, and status. Can succeed, fail, or be resumed.
 - **Task Provider**: fetches tasks, inspects configuration, and writes status changes back.
 
 ### Runtime Flow
 
 ```
+Pipeline (project workstation, persists across tasks)
+  ├── Task A → Run → git worktree + Terminal ← active
+  ├── Task B → Run → git worktree + Terminal ← active
+  └── Task C → Run → git worktree + Terminal ← active
+      (up to maxConcurrentRuns, default 3)
+
 Task Provider ──fetch──▶ Task ──routed into──▶ Pipeline
-                                            └─▶ Run starts in embedded terminal
+                                            └─▶ Run starts in own worktree + terminal
                                                 └─▶ status writeback to provider
 ```
 
+**Concurrency model**: multiple Tasks run in parallel within a Pipeline (each in its own worktree). Retries of the same Task are serial.
+
 States: `pending` → `developing` → `done` / `failed`
 - Both agent exit and user action can trigger state transitions
-- Agent crash/timeout → `failed` state
+- Agent crash/timeout → `failed` state (configurable timeout, default 2h)
 - Task provider decides how tasks are loaded and where status writes back
 - Pipeline persists across tasks; runs are short-lived
 - Task filter and polling interval are user-configurable per provider when supported
+
+### Execution Environment
+
+Each Run gets an isolated execution environment:
+- **Git worktree**: `git worktree add` from pipeline repo, one branch per Run
+- **Context injection**: `TASK.md` written into worktree with task description and metadata (Claude Code discovers it via CLAUDE.md conventions)
+- **Cleanup**: on success, worktree removed; on failure, preserved for debugging
 
 ### Terminal Integration (libghostty-spm)
 

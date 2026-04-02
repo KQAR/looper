@@ -1,12 +1,17 @@
 import Foundation
 
 struct Pipeline: Equatable, Identifiable, Sendable {
+    static let defaultMaxConcurrentRuns = 3
+    static let defaultRunTimeoutSeconds: TimeInterval = 2 * 60 * 60 // 2 hours
+
     let id: UUID
     var name: String
     var projectPath: String
     var executionPath: String
     var agentCommand: String
     var tmuxSessionName: String
+    var maxConcurrentRuns: Int
+    var runTimeoutSeconds: TimeInterval
     var createdAt: Date
 
     init(
@@ -16,6 +21,8 @@ struct Pipeline: Equatable, Identifiable, Sendable {
         executionPath: String,
         agentCommand: String,
         tmuxSessionName: String,
+        maxConcurrentRuns: Int = Pipeline.defaultMaxConcurrentRuns,
+        runTimeoutSeconds: TimeInterval = Pipeline.defaultRunTimeoutSeconds,
         createdAt: Date = .now
     ) {
         self.id = id
@@ -24,6 +31,8 @@ struct Pipeline: Equatable, Identifiable, Sendable {
         self.executionPath = executionPath
         self.agentCommand = agentCommand
         self.tmuxSessionName = tmuxSessionName
+        self.maxConcurrentRuns = maxConcurrentRuns
+        self.runTimeoutSeconds = runTimeoutSeconds
         self.createdAt = createdAt
     }
 

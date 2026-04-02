@@ -8,6 +8,7 @@ struct AppFeature {
     @Dependency(\.runStoreClient) var runStoreClient
     @Dependency(\.taskProviderClient) var taskProviderClient
     @Dependency(\.pipelineTerminalClient) var pipelineTerminalClient
+    @Dependency(\.gitWorktreeClient) var gitWorktreeClient
     @Dependency(\.uuid) var uuid
 
     struct TaskStatusUpdate: Equatable, Sendable {
@@ -333,36 +334,55 @@ struct AppFeature {
                 guard let task = selectedTask(state: state) else { return .none }
 
                 if let existingPipelineID = pipelineID(for: task, in: state.pipeline.pipelines) {
-                    if let activeRun = activeRun(
-                        for: existingPipelineID,
+                    guard let pipeline = state.pipeline.pipelines[id: existingPipelineID] else {
+                        return .none
+                    }
+
+                    // Check if this specific task already has an active run
+                    if let existingRun = activeRunForTask(
+                        taskID: task.id,
+                        pipelineID: existingPipelineID,
                         in: state.runs
                     ) {
-                        guard activeRun.taskID == task.id else {
-                            state.taskProviderErrorMessage = String(localized: "error.finishCurrentRun", bundle: .localized)
-                            return .none
-                        }
+                        // Task already running — focus its terminal
+                        state.selectedTaskID = task.id
+                        return .merge(
+                            .send(.pipeline(.selectPipeline(existingPipelineID))),
+                            .run { [runID = existingRun.id] _ in
+                                await pipelineTerminalClient.focusRunSession(runID)
+                            }
+                        )
+                    }
+
+                    // Check concurrency limit
+                    let activeCount = activeRunCount(
+                        forPipeline: existingPipelineID,
+                        in: state.runs
+                    )
+                    guard activeCount < pipeline.maxConcurrentRuns else {
+                        state.taskProviderErrorMessage = String(localized: "error.maxConcurrentRuns", bundle: .localized)
+                        return .none
                     }
 
                     state.selectedTaskID = task.id
+                    let runID = uuid()
+                    let startedAt = now
+
                     var effects: [Effect<Action>] = [
                         .send(.pipeline(.selectPipeline(existingPipelineID))),
-                        .send(.pipeline(.attachSelectedPipelineButtonTapped)),
                     ]
 
-                    if activeRun(for: existingPipelineID, in: state.runs) == nil {
-                        effects.insert(
-                            beginRun(
-                                pipelineID: existingPipelineID,
-                                taskID: task.id,
-                                trigger: .resumeTask,
-                                state: &state,
-                                runID: uuid(),
-                                startedAt: now,
-                                saveRun: runStoreClient.saveRun
-                            ),
-                            at: 0
+                    // Create worktree, terminal, and start run
+                    effects.append(
+                        startRunWithWorktree(
+                            runID: runID,
+                            pipeline: pipeline,
+                            task: task,
+                            trigger: .startTask,
+                            startedAt: startedAt,
+                            state: &state
                         )
-                    }
+                    )
 
                     if state.pipeline.preferences.taskProviderConfiguration.canFetchTasks {
                         effects.append(
@@ -442,25 +462,27 @@ struct AppFeature {
                 let pendingRunTaskID = state.pendingRunTaskID
                 let matchingTaskID = taskID(matching: pipeline, in: state.tasks)
 
-                if let pendingRunTaskID {
+                if let pendingRunTaskID,
+                   let task = state.tasks[id: pendingRunTaskID]
+                {
                     state.selectedTaskID = pendingRunTaskID
-                    let taskID = pendingRunTaskID
-                    state.selectedTaskID = taskID
-                    let runEffect = beginRun(
-                        pipelineID: pipeline.id,
-                        taskID: taskID,
-                        trigger: .startTask,
-                        state: &state,
-                        runID: uuid(),
-                        startedAt: now,
-                        saveRun: runStoreClient.saveRun
-                    )
+                    let runID = uuid()
+
+                    var effects: [Effect<Action>] = [
+                        startRunWithWorktree(
+                            runID: runID,
+                            pipeline: pipeline,
+                            task: task,
+                            trigger: .startTask,
+                            startedAt: now,
+                            state: &state
+                        ),
+                    ]
 
                     if state.pipeline.preferences.taskProviderConfiguration.canFetchTasks {
-                        return .merge(
-                            runEffect,
+                        effects.append(
                             writeTaskStatus(
-                                taskID: taskID,
+                                taskID: pendingRunTaskID,
                                 status: .developing,
                                 configuration: state.pipeline.preferences.taskProviderConfiguration,
                                 state: &state,
@@ -469,7 +491,7 @@ struct AppFeature {
                         )
                     }
 
-                    return runEffect
+                    return .merge(effects)
                 }
 
                 state.selectedTaskID = matchingTaskID
@@ -525,25 +547,48 @@ struct AppFeature {
 
             case let .terminalEventReceived(event):
                 guard let suggestedStatus = event.suggestedTaskStatus else { return .none }
-                guard let pipeline = state.pipeline.pipelines[id: event.pipelineID] else { return .none }
-                guard let taskID = taskID(matching: pipeline, in: state.tasks) else { return .none }
+
+                // Find the run — prefer runID if available, fall back to pipeline matching
+                let matchedRun: Run?
+                if let runID = event.runID {
+                    matchedRun = state.runs[id: runID]
+                } else {
+                    matchedRun = state.runs.first {
+                        $0.pipelineID == event.pipelineID && $0.isActive
+                    }
+                }
+
+                guard let run = matchedRun else { return .none }
+                let taskID = run.taskID
                 guard let task = state.tasks[id: taskID] else { return .none }
                 guard task.status == .developing else { return .none }
 
                 let runStatus: Run.Status = suggestedStatus == .done ? .succeeded : .failed
-                let runEffect = finishActiveRun(
-                    pipelineID: event.pipelineID,
-                    taskID: taskID,
+                let finishedRun = run.finished(
                     status: runStatus,
                     exitCode: event.exitCode,
-                    state: &state,
-                    finishedAt: now,
-                    saveRun: runStoreClient.saveRun
+                    finishedAt: now
                 )
+                state.runs[id: run.id] = finishedRun
 
-                if state.pipeline.preferences.taskProviderConfiguration.canFetchTasks {
+                let saveEffect: Effect<Action> = .run { [saveRun = runStoreClient.saveRun] send in
+                    do {
+                        try await saveRun(finishedRun)
+                    } catch {
+                        await send(.runPersistenceFailed(.init(description: error.localizedDescription)))
+                    }
+                }
+
+                // Check if there are other active runs for this task
+                let hasOtherActiveRuns = state.runs.contains {
+                    $0.taskID == taskID && $0.isActive && $0.id != run.id
+                }
+
+                if state.pipeline.preferences.taskProviderConfiguration.canFetchTasks,
+                   !hasOtherActiveRuns
+                {
                     return .merge(
-                        runEffect,
+                        saveEffect,
                         writeTaskStatus(
                             taskID: taskID,
                             status: suggestedStatus,
@@ -554,8 +599,10 @@ struct AppFeature {
                     )
                 }
 
-                updateTaskStatus(id: taskID, status: suggestedStatus, state: &state)
-                return runEffect
+                if !hasOtherActiveRuns {
+                    updateTaskStatus(id: taskID, status: suggestedStatus, state: &state)
+                }
+                return saveEffect
 
             case .dismissTaskProviderError:
                 state.taskProviderErrorMessage = nil
@@ -589,6 +636,31 @@ struct AppFeature {
 
             }
         }
+    }
+}
+
+extension AppFeature {
+    func startRunWithWorktree(
+        runID: UUID,
+        pipeline: Pipeline,
+        task: LooperTask,
+        trigger: Run.Trigger,
+        startedAt: Date,
+        state: inout State
+    ) -> Effect<Action> {
+        startRunWithWorktreeEffect(
+            runID: runID,
+            pipeline: pipeline,
+            task: task,
+            trigger: trigger,
+            startedAt: startedAt,
+            state: &state,
+            saveRun: runStoreClient.saveRun,
+            createWorktree: gitWorktreeClient.createWorktree,
+            writeTaskContext: gitWorktreeClient.writeTaskContext,
+            upsertRunSession: pipelineTerminalClient.upsertRunSession,
+            bootstrapRunSession: pipelineTerminalClient.bootstrapRunSession
+        )
     }
 }
 
@@ -680,6 +752,23 @@ private func activeRun(
     in runs: IdentifiedArrayOf<Run>
 ) -> Run? {
     runs.first { $0.pipelineID == pipelineID && $0.isActive }
+}
+
+private func activeRunForTask(
+    taskID: LooperTask.ID,
+    pipelineID: UUID,
+    in runs: IdentifiedArrayOf<Run>
+) -> Run? {
+    runs.first {
+        $0.pipelineID == pipelineID && $0.taskID == taskID && $0.isActive
+    }
+}
+
+private func activeRunCount(
+    forPipeline pipelineID: UUID,
+    in runs: IdentifiedArrayOf<Run>
+) -> Int {
+    runs.filter { $0.pipelineID == pipelineID && $0.isActive }.count
 }
 
 private func activeRunID(
@@ -794,6 +883,70 @@ private func finishActiveRun(
             )
         }
     }
+}
+
+private func startRunWithWorktreeEffect(
+    runID: UUID,
+    pipeline: Pipeline,
+    task: LooperTask,
+    trigger: Run.Trigger,
+    startedAt: Date,
+    state: inout AppFeature.State,
+    saveRun: @escaping @Sendable (Run) async throws -> Void,
+    createWorktree: @escaping @Sendable (String, String) async throws -> String,
+    writeTaskContext: @escaping @Sendable (String, LooperTask) async throws -> Void,
+    upsertRunSession: @escaping @Sendable (UUID, Pipeline, String) async -> Void,
+    bootstrapRunSession: @escaping @Sendable (UUID) async -> Void
+) -> Effect<AppFeature.Action> {
+    let branchName = worktreeBranchName(taskID: task.id, runID: runID)
+
+    // Create the run record immediately (worktreePath set later via effect)
+    let run = Run(
+        id: runID,
+        pipelineID: pipeline.id,
+        taskID: task.id,
+        status: .running,
+        trigger: trigger,
+        worktreePath: nil,
+        startedAt: startedAt,
+        finishedAt: nil,
+        exitCode: nil,
+        logPath: logPath(for: runID)
+    )
+    state.runs.insert(run, at: 0)
+
+    return .run { send in
+        do {
+            // 1. Create git worktree
+            let worktreePath = try await createWorktree(pipeline.projectPath, branchName)
+
+            // 2. Write TASK.md context
+            try await writeTaskContext(worktreePath, task)
+
+            // 3. Create terminal session for this run
+            await upsertRunSession(runID, pipeline, worktreePath)
+
+            // 4. Bootstrap (send attach script) the terminal
+            await bootstrapRunSession(runID)
+
+            // 5. Persist run with worktreePath
+            var updatedRun = run
+            updatedRun.worktreePath = worktreePath
+            try await saveRun(updatedRun)
+        } catch {
+            await send(
+                .runPersistenceFailed(.init(description: error.localizedDescription))
+            )
+        }
+    }
+}
+
+private func worktreeBranchName(taskID: String, runID: UUID) -> String {
+    let sanitized = taskID
+        .replacingOccurrences(of: #"[^a-zA-Z0-9._-]+"#, with: "-", options: .regularExpression)
+        .trimmingCharacters(in: CharacterSet(charactersIn: "-._"))
+        .prefix(40)
+    return "looper/\(sanitized)-\(runID.uuidString.prefix(8))"
 }
 
 private func logPath(for runID: UUID) -> String {

@@ -11,7 +11,10 @@ private let logger = Logger(subsystem: "com.looper", category: "Terminal")
 final class PipelineTerminalRegistry {
     static let shared = PipelineTerminalRegistry()
 
+    /// Pipeline-level sessions (default shell per pipeline)
     private(set) var sessions: [UUID: PipelineTerminalSession] = [:]
+    /// Run-level sessions (one per active run, keyed by Run.ID)
+    private(set) var runSessions: [UUID: PipelineTerminalSession] = [:]
     private(set) var terminalHost: TerminalHostView?
     private var eventContinuations: [UUID: AsyncStream<PipelineTerminalEvent>.Continuation] = [:]
 
@@ -30,6 +33,10 @@ final class PipelineTerminalRegistry {
             logger.info("[Registry] deferred terminal creation, hostInWindow=\(host.window != nil)")
             for (id, session) in self.sessions {
                 logger.info("[Registry] creating persistent terminal for pipeline \(id.uuidString.prefix(8))")
+                session.createPersistentTerminalIfNeeded(in: host)
+            }
+            for (id, session) in self.runSessions {
+                logger.info("[Registry] creating persistent terminal for run \(id.uuidString.prefix(8))")
                 session.createPersistentTerminalIfNeeded(in: host)
             }
         }
@@ -71,6 +78,40 @@ final class PipelineTerminalRegistry {
         sessions.removeValue(forKey: id)?.invalidate()
     }
 
+    // MARK: - Run Sessions
+
+    func upsertRunSession(runID: UUID, pipeline: Pipeline, executionPath: String) {
+        if runSessions[runID] != nil { return }
+
+        var runPipeline = pipeline
+        runPipeline.executionPath = executionPath
+
+        let session = PipelineTerminalSession(
+            pipeline: runPipeline,
+            runID: runID
+        ) { [weak self] event in
+            self?.broadcast(event)
+        }
+        runSessions[runID] = session
+
+        if let terminalHost, terminalHost.window != nil {
+            session.createPersistentTerminalIfNeeded(in: terminalHost)
+        }
+    }
+
+    func runSession(id: UUID) -> PipelineTerminalSession? {
+        runSessions[id]
+    }
+
+    func removeRunSession(id: UUID) {
+        runSessions.removeValue(forKey: id)?.invalidate()
+    }
+
+    /// All active run sessions for a given pipeline
+    func runSessions(forPipeline pipelineID: UUID) -> [UUID: PipelineTerminalSession] {
+        runSessions.filter { $0.value.pipeline.id == pipelineID }
+    }
+
     func events() -> AsyncStream<PipelineTerminalEvent> {
         AsyncStream { continuation in
             let id = UUID()
@@ -92,6 +133,7 @@ final class PipelineTerminalRegistry {
 
 struct PipelineTerminalEvent: Equatable, Sendable {
     var pipelineID: UUID
+    var runID: UUID?
     var suggestedTaskStatus: LooperTask.Status?
     var exitCode: Int32?
 }
@@ -120,6 +162,7 @@ final class PipelineTerminalSession: NSObject {
     }
 
     private(set) var pipeline: Pipeline
+    let runID: UUID?
     private(set) var title: String = ""
     private(set) var surfaceSize: TerminalGridMetrics?
     private(set) var isFocused: Bool = false
@@ -137,9 +180,11 @@ final class PipelineTerminalSession: NSObject {
 
     init(
         pipeline: Pipeline,
+        runID: UUID? = nil,
         eventSink: @escaping @MainActor @Sendable (PipelineTerminalEvent) -> Void
     ) {
         self.pipeline = pipeline
+        self.runID = runID
         self.eventSink = eventSink
         self.controller = TerminalController { configuration in
             configuration.withFontSize(13)
@@ -298,6 +343,7 @@ extension PipelineTerminalSession:
         eventSink(
             PipelineTerminalEvent(
                 pipelineID: pipeline.id,
+                runID: runID,
                 suggestedTaskStatus: suggestedTaskStatus,
                 exitCode: exitCode
             )

@@ -106,6 +106,20 @@ actor AppDatabase {
             }
         }
 
+        migrator.registerMigration("addParallelRunSupport") { db in
+            try db.alter(table: PipelineRecord.databaseTableName) { table in
+                table.add(column: "maxConcurrentRuns", .integer)
+                    .notNull()
+                    .defaults(to: Pipeline.defaultMaxConcurrentRuns)
+                table.add(column: "runTimeoutSeconds", .double)
+                    .notNull()
+                    .defaults(to: Pipeline.defaultRunTimeoutSeconds)
+            }
+            try db.alter(table: RunRecord.databaseTableName) { table in
+                table.add(column: "worktreePath", .text)
+            }
+        }
+
         return migrator
     }
 }

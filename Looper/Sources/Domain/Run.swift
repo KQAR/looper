@@ -42,6 +42,7 @@ struct Run: Equatable, Identifiable, Sendable {
     var taskID: LooperTask.ID
     var status: Status
     var trigger: Trigger
+    var worktreePath: String?
     var startedAt: Date
     var finishedAt: Date?
     var exitCode: Int32?
@@ -49,6 +50,10 @@ struct Run: Equatable, Identifiable, Sendable {
 
     var isActive: Bool {
         status == .running
+    }
+
+    var executionPath: String? {
+        worktreePath
     }
 }
 

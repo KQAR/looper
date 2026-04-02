@@ -10,6 +10,8 @@ struct PipelineRecord: Codable, FetchableRecord, MutablePersistableRecord, Table
     var executionPath: String
     var agentCommand: String
     var tmuxSessionName: String
+    var maxConcurrentRuns: Int
+    var runTimeoutSeconds: Double
     var createdAt: Date
 
     init(pipeline: Pipeline) {
@@ -19,6 +21,8 @@ struct PipelineRecord: Codable, FetchableRecord, MutablePersistableRecord, Table
         self.executionPath = pipeline.executionPath
         self.agentCommand = pipeline.agentCommand
         self.tmuxSessionName = pipeline.tmuxSessionName
+        self.maxConcurrentRuns = pipeline.maxConcurrentRuns
+        self.runTimeoutSeconds = pipeline.runTimeoutSeconds
         self.createdAt = pipeline.createdAt
     }
 
@@ -30,6 +34,8 @@ struct PipelineRecord: Codable, FetchableRecord, MutablePersistableRecord, Table
             executionPath: executionPath,
             agentCommand: agentCommand,
             tmuxSessionName: tmuxSessionName,
+            maxConcurrentRuns: maxConcurrentRuns,
+            runTimeoutSeconds: runTimeoutSeconds,
             createdAt: createdAt
         )
     }

@@ -581,6 +581,23 @@
         }
       }
     },
+    "error.maxConcurrentRuns": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This pipeline has reached its maximum number of concurrent runs."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此流水线已达到最大并行运行数。"
+          }
+        }
+      }
+    },
     "error.localProviderNotReady": {
       "extractionState": "manual",
       "localizations": {
