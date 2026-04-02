@@ -368,17 +368,27 @@ struct AppFeature {
                     let runID = uuid()
                     let startedAt = now
 
+                    // Check for a previous failed run with preserved worktree → resume
+                    let previousFailedRun = mostRecentFailedRun(
+                        taskID: task.id,
+                        pipelineID: existingPipelineID,
+                        in: state.runs
+                    )
+                    let reuseWorktree = previousFailedRun?.worktreePath
+                    let trigger: Run.Trigger = reuseWorktree != nil ? .resumeTask : .startTask
+
                     var effects: [Effect<Action>] = [
                         .send(.pipeline(.selectPipeline(existingPipelineID))),
                     ]
 
-                    // Create worktree, terminal, and start run
+                    // Create worktree (or reuse), terminal, and start run
                     effects.append(
                         startRunWithWorktree(
                             runID: runID,
                             pipeline: pipeline,
                             task: task,
-                            trigger: .startTask,
+                            trigger: trigger,
+                            reuseWorktreePath: reuseWorktree,
                             startedAt: startedAt,
                             state: &state
                         )
@@ -645,6 +655,7 @@ extension AppFeature {
         pipeline: Pipeline,
         task: LooperTask,
         trigger: Run.Trigger,
+        reuseWorktreePath: String? = nil,
         startedAt: Date,
         state: inout State
     ) -> Effect<Action> {
@@ -653,6 +664,7 @@ extension AppFeature {
             pipeline: pipeline,
             task: task,
             trigger: trigger,
+            reuseWorktreePath: reuseWorktreePath,
             startedAt: startedAt,
             state: &state,
             saveRun: runStoreClient.saveRun,
@@ -769,6 +781,19 @@ private func activeRunCount(
     in runs: IdentifiedArrayOf<Run>
 ) -> Int {
     runs.filter { $0.pipelineID == pipelineID && $0.isActive }.count
+}
+
+private func mostRecentFailedRun(
+    taskID: LooperTask.ID,
+    pipelineID: UUID,
+    in runs: IdentifiedArrayOf<Run>
+) -> Run? {
+    runs.first {
+        $0.pipelineID == pipelineID
+            && $0.taskID == taskID
+            && $0.status == .failed
+            && $0.worktreePath != nil
+    }
 }
 
 private func activeRunID(
@@ -890,15 +915,17 @@ private func startRunWithWorktreeEffect(
     pipeline: Pipeline,
     task: LooperTask,
     trigger: Run.Trigger,
+    reuseWorktreePath: String?,
     startedAt: Date,
     state: inout AppFeature.State,
     saveRun: @escaping @Sendable (Run) async throws -> Void,
     createWorktree: @escaping @Sendable (String, String) async throws -> String,
     writeTaskContext: @escaping @Sendable (String, LooperTask) async throws -> Void,
-    upsertRunSession: @escaping @Sendable (UUID, Pipeline, String) async -> Void,
+    upsertRunSession: @escaping @Sendable (UUID, Pipeline, String, Bool) async -> Void,
     bootstrapRunSession: @escaping @Sendable (UUID) async -> Void
 ) -> Effect<AppFeature.Action> {
     let branchName = worktreeBranchName(taskID: task.id, runID: runID)
+    let isResume = trigger == .resumeTask && reuseWorktreePath != nil
 
     // Create the run record immediately (worktreePath set later via effect)
     let run = Run(
@@ -907,7 +934,7 @@ private func startRunWithWorktreeEffect(
         taskID: task.id,
         status: .running,
         trigger: trigger,
-        worktreePath: nil,
+        worktreePath: reuseWorktreePath,
         startedAt: startedAt,
         finishedAt: nil,
         exitCode: nil,
@@ -917,14 +944,19 @@ private func startRunWithWorktreeEffect(
 
     return .run { send in
         do {
-            // 1. Create git worktree
-            let worktreePath = try await createWorktree(pipeline.projectPath, branchName)
+            // 1. Create or reuse git worktree
+            let worktreePath: String
+            if let reuseWorktreePath {
+                worktreePath = reuseWorktreePath
+            } else {
+                worktreePath = try await createWorktree(pipeline.projectPath, branchName)
+            }
 
-            // 2. Write TASK.md context
+            // 2. Write/refresh TASK.md context
             try await writeTaskContext(worktreePath, task)
 
-            // 3. Create terminal session for this run
-            await upsertRunSession(runID, pipeline, worktreePath)
+            // 3. Create terminal session for this run (with resume flag)
+            await upsertRunSession(runID, pipeline, worktreePath, isResume)
 
             // 4. Bootstrap (send attach script) the terminal
             await bootstrapRunSession(runID)

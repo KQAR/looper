@@ -58,13 +58,19 @@ struct Pipeline: Equatable, Identifiable, Sendable {
     }
 
     var attachScript: String {
-        let escapedExecutionPath = executionPath.shellQuoted
-        let command = agentCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-        let escapedStatusFile = exitStatusFileURL.path.shellQuoted
+        runAttachScript(executionPath: executionPath, resume: false)
+    }
 
-        if command.isEmpty {
+    func runAttachScript(executionPath: String, resume: Bool) -> String {
+        let escapedExecutionPath = executionPath.shellQuoted
+        let baseCommand = agentCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if baseCommand.isEmpty {
             return "cd \(escapedExecutionPath)"
         }
+
+        let command = resume ? Self.appendContinueFlag(to: baseCommand) : baseCommand
+        let escapedStatusFile = exitStatusFileURL.path.shellQuoted
 
         let wrappedScript = """
         rm -f \(escapedStatusFile); \
@@ -73,6 +79,14 @@ struct Pipeline: Equatable, Identifiable, Sendable {
         """
 
         return "/bin/zsh -lc \(wrappedScript.shellQuoted)"
+    }
+
+    /// Appends --continue to a claude command for session resume.
+    /// If the command doesn't look like a claude invocation, returns it unchanged.
+    private static func appendContinueFlag(to command: String) -> String {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("claude") else { return command }
+        return trimmed + " --continue"
     }
 }
 

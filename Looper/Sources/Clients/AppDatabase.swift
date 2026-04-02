@@ -117,6 +117,7 @@ actor AppDatabase {
             }
             try db.alter(table: RunRecord.databaseTableName) { table in
                 table.add(column: "worktreePath", .text)
+                table.add(column: "sessionID", .text)
             }
         }
 

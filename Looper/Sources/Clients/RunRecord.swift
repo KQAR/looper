@@ -10,6 +10,7 @@ struct RunRecord: Codable, FetchableRecord, MutablePersistableRecord, TableRecor
     var status: Run.Status
     var trigger: Run.Trigger
     var worktreePath: String?
+    var sessionID: String?
     var startedAt: Date
     var finishedAt: Date?
     var exitCode: Int32?
@@ -22,6 +23,7 @@ struct RunRecord: Codable, FetchableRecord, MutablePersistableRecord, TableRecor
         self.status = run.status
         self.trigger = run.trigger
         self.worktreePath = run.worktreePath
+        self.sessionID = run.sessionID
         self.startedAt = run.startedAt
         self.finishedAt = run.finishedAt
         self.exitCode = run.exitCode
@@ -36,6 +38,7 @@ struct RunRecord: Codable, FetchableRecord, MutablePersistableRecord, TableRecor
             status: status,
             trigger: trigger,
             worktreePath: worktreePath,
+            sessionID: sessionID,
             startedAt: startedAt,
             finishedAt: finishedAt,
             exitCode: exitCode,

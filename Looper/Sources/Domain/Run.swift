@@ -43,6 +43,7 @@ struct Run: Equatable, Identifiable, Sendable {
     var status: Status
     var trigger: Trigger
     var worktreePath: String?
+    var sessionID: String?
     var startedAt: Date
     var finishedAt: Date?
     var exitCode: Int32?

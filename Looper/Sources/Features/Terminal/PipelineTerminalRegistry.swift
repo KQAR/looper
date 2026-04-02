@@ -80,7 +80,7 @@ final class PipelineTerminalRegistry {
 
     // MARK: - Run Sessions
 
-    func upsertRunSession(runID: UUID, pipeline: Pipeline, executionPath: String) {
+    func upsertRunSession(runID: UUID, pipeline: Pipeline, executionPath: String, resume: Bool = false) {
         if runSessions[runID] != nil { return }
 
         var runPipeline = pipeline
@@ -88,7 +88,8 @@ final class PipelineTerminalRegistry {
 
         let session = PipelineTerminalSession(
             pipeline: runPipeline,
-            runID: runID
+            runID: runID,
+            resume: resume
         ) { [weak self] event in
             self?.broadcast(event)
         }
@@ -163,6 +164,7 @@ final class PipelineTerminalSession: NSObject {
 
     private(set) var pipeline: Pipeline
     let runID: UUID?
+    let resume: Bool
     private(set) var title: String = ""
     private(set) var surfaceSize: TerminalGridMetrics?
     private(set) var isFocused: Bool = false
@@ -181,10 +183,12 @@ final class PipelineTerminalSession: NSObject {
     init(
         pipeline: Pipeline,
         runID: UUID? = nil,
+        resume: Bool = false,
         eventSink: @escaping @MainActor @Sendable (PipelineTerminalEvent) -> Void
     ) {
         self.pipeline = pipeline
         self.runID = runID
+        self.resume = resume
         self.eventSink = eventSink
         self.controller = TerminalController { configuration in
             configuration.withFontSize(13)
@@ -300,7 +304,10 @@ final class PipelineTerminalSession: NSObject {
         }
 
         let inWindow = terminalView.window != nil
-        let script = pipeline.attachScript
+        let script = pipeline.runAttachScript(
+            executionPath: pipeline.executionPath,
+            resume: resume
+        )
         logger.info("[Session:\(self.pipeline.name)] sending attach script, inWindow=\(inWindow), scriptLen=\(script.count)")
         logger.debug("[Session:\(self.pipeline.name)] script=\(script)")
 

@@ -10,7 +10,7 @@ struct PipelineTerminalClient {
     var attachSessionIfNeeded: @Sendable (UUID) async -> Void
     var rebuildSession: @Sendable (Pipeline) async -> Void
     // Run-level terminal sessions
-    var upsertRunSession: @Sendable (_ runID: UUID, _ pipeline: Pipeline, _ executionPath: String) async -> Void
+    var upsertRunSession: @Sendable (_ runID: UUID, _ pipeline: Pipeline, _ executionPath: String, _ resume: Bool) async -> Void
     var focusRunSession: @Sendable (_ runID: UUID) async -> Void
     var bootstrapRunSession: @Sendable (_ runID: UUID) async -> Void
     var removeRunSession: @Sendable (_ runID: UUID) async -> Void
@@ -60,12 +60,13 @@ extension PipelineTerminalClient: DependencyKey {
                 PipelineTerminalRegistry.shared.rebuildSession(for: pipeline)
             }
         },
-        upsertRunSession: { runID, pipeline, executionPath in
+        upsertRunSession: { runID, pipeline, executionPath, resume in
             await MainActor.run {
                 PipelineTerminalRegistry.shared.upsertRunSession(
                     runID: runID,
                     pipeline: pipeline,
-                    executionPath: executionPath
+                    executionPath: executionPath,
+                    resume: resume
                 )
             }
         },
@@ -98,7 +99,7 @@ extension PipelineTerminalClient: DependencyKey {
         bootstrapSession: { _ in },
         attachSessionIfNeeded: { _ in },
         rebuildSession: { _ in },
-        upsertRunSession: { _, _, _ in },
+        upsertRunSession: { _, _, _, _ in },
         focusRunSession: { _ in },
         bootstrapRunSession: { _ in },
         removeRunSession: { _ in },
