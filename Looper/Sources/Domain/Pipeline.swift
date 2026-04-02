@@ -9,6 +9,9 @@ struct Pipeline: Equatable, Identifiable, Sendable {
     var projectPath: String
     var executionPath: String
     var agentCommand: String
+    /// Command used when resuming a failed run. If empty, agentCommand is used (no resume behavior).
+    /// Examples: "claude --continue", "codex --resume"
+    var resumeCommand: String
     var tmuxSessionName: String
     var maxConcurrentRuns: Int
     var runTimeoutSeconds: TimeInterval
@@ -20,6 +23,7 @@ struct Pipeline: Equatable, Identifiable, Sendable {
         projectPath: String,
         executionPath: String,
         agentCommand: String,
+        resumeCommand: String = "",
         tmuxSessionName: String,
         maxConcurrentRuns: Int = Pipeline.defaultMaxConcurrentRuns,
         runTimeoutSeconds: TimeInterval = Pipeline.defaultRunTimeoutSeconds,
@@ -30,6 +34,7 @@ struct Pipeline: Equatable, Identifiable, Sendable {
         self.projectPath = projectPath
         self.executionPath = executionPath
         self.agentCommand = agentCommand
+        self.resumeCommand = resumeCommand
         self.tmuxSessionName = tmuxSessionName
         self.maxConcurrentRuns = maxConcurrentRuns
         self.runTimeoutSeconds = runTimeoutSeconds
@@ -64,12 +69,14 @@ struct Pipeline: Equatable, Identifiable, Sendable {
     func runAttachScript(executionPath: String, resume: Bool) -> String {
         let escapedExecutionPath = executionPath.shellQuoted
         let baseCommand = agentCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resumeCmd = resumeCommand.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if baseCommand.isEmpty {
             return "cd \(escapedExecutionPath)"
         }
 
-        let command = resume ? Self.appendContinueFlag(to: baseCommand) : baseCommand
+        // Use resumeCommand if set and resuming; otherwise fall back to agentCommand
+        let command = (resume && !resumeCmd.isEmpty) ? resumeCmd : baseCommand
         let escapedStatusFile = exitStatusFileURL.path.shellQuoted
 
         let wrappedScript = """
@@ -79,14 +86,6 @@ struct Pipeline: Equatable, Identifiable, Sendable {
         """
 
         return "/bin/zsh -lc \(wrappedScript.shellQuoted)"
-    }
-
-    /// Appends --continue to a claude command for session resume.
-    /// If the command doesn't look like a claude invocation, returns it unchanged.
-    private static func appendContinueFlag(to command: String) -> String {
-        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("claude") else { return command }
-        return trimmed + " --continue"
     }
 }
 

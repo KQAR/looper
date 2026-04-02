@@ -114,6 +114,9 @@ actor AppDatabase {
                 table.add(column: "runTimeoutSeconds", .double)
                     .notNull()
                     .defaults(to: Pipeline.defaultRunTimeoutSeconds)
+                table.add(column: "resumeCommand", .text)
+                    .notNull()
+                    .defaults(to: "")
             }
             try db.alter(table: RunRecord.databaseTableName) { table in
                 table.add(column: "worktreePath", .text)
