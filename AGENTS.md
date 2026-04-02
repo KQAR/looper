@@ -55,9 +55,10 @@ Task Provider ──fetch──▶ Task ──routed into──▶ Pipeline
 
 **Concurrency model**: multiple Tasks run in parallel within a Pipeline (each in its own worktree). Retries of the same Task are serial.
 
-States: `pending` → `developing` → `done` / `failed`
+States: `todo` → `inProgress` → `inReview` → `done`
 - Both agent exit and user action can trigger state transitions
-- Agent crash/timeout → `failed` state (configurable timeout, default 2h)
+- Agent exit 0 → `inReview`; agent crash/timeout → back to `todo`
+- `inReview` can be returned to `todo` (rollback) or approved to `done`
 - Task provider decides how tasks are loaded and where status writes back
 - Pipeline persists across tasks; runs are short-lived
 - Task filter and polling interval are user-configurable per provider when supported

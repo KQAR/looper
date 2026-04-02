@@ -68,7 +68,7 @@ final class AppFeatureTests: XCTestCase {
             id: "task-1",
             title: "First",
             summary: "First summary",
-            status: .pending,
+            status: .todo,
             source: "Mock Feishu",
             repoPath: URL(filePath: "/tmp/first")
         )
@@ -76,7 +76,7 @@ final class AppFeatureTests: XCTestCase {
             id: "task-2",
             title: "Second",
             summary: "Second summary",
-            status: .pending,
+            status: .todo,
             source: "Mock Feishu",
             repoPath: URL(filePath: "/tmp/second")
         )
@@ -135,7 +135,7 @@ final class AppFeatureTests: XCTestCase {
             id: "task-1",
             title: "Start me",
             summary: "Summary",
-            status: .pending,
+            status: .todo,
             source: "Mock Feishu",
             repoPath: URL(filePath: "/tmp/demo")
         )
@@ -211,12 +211,12 @@ final class AppFeatureTests: XCTestCase {
         }
         await store.receive(\.taskStatusUpdateResponse.success) {
             $0.updatingTaskIDs = []
-            $0.tasks[id: task.id]?.status = .developing
+            $0.tasks[id: task.id]?.status = .inProgress
         }
 
         let events = await recorder.value()
         XCTAssertEqual(events.first?.0, task.id)
-        XCTAssertEqual(events.first?.1, .developing)
+        XCTAssertEqual(events.first?.1, .inProgress)
     }
 
     func testOnAppearLoadsPersistedPipelines() async {
@@ -291,7 +291,7 @@ final class AppFeatureTests: XCTestCase {
             id: "task-1",
             title: "Task",
             summary: "Summary",
-            status: .pending,
+            status: .todo,
             source: "Mock Feishu",
             repoPath: URL(filePath: "/tmp/repo")
         )
@@ -389,7 +389,7 @@ final class AppFeatureTests: XCTestCase {
             id: "task-1",
             title: "Match",
             summary: "Summary",
-            status: .pending,
+            status: .todo,
             source: "Local",
             repoPath: URL(filePath: "/tmp/repo")
         )
@@ -397,7 +397,7 @@ final class AppFeatureTests: XCTestCase {
             id: "task-2",
             title: "Other",
             summary: "Summary",
-            status: .pending,
+            status: .todo,
             source: "Local",
             repoPath: URL(filePath: "/tmp/other")
         )
@@ -546,7 +546,7 @@ final class AppFeatureTests: XCTestCase {
             id: "task-1",
             title: "Inbox Task",
             summary: "Summary",
-            status: .pending,
+            status: .todo,
             source: "Local",
             repoPath: URL(filePath: "/tmp/demo")
         )
@@ -608,7 +608,7 @@ final class AppFeatureTests: XCTestCase {
         }
 
         XCTAssertTrue(store.state.runs.isEmpty)
-        XCTAssertEqual(store.state.tasks[id: task.id]?.status, .pending)
+        XCTAssertEqual(store.state.tasks[id: task.id]?.status, .todo)
     }
 
     func testOpenLocalTaskComposerRequiresSelectedPipeline() async {
@@ -732,34 +732,16 @@ final class AppFeatureTests: XCTestCase {
             id: "task-1",
             title: "Done me",
             summary: "Summary",
-            status: .developing,
+            status: .inReview,
             source: "Feishu",
             repoPath: URL(filePath: "/tmp/demo")
         )
         let pipelineID = UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!
-        let runningRun = Run(
-            id: UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!,
-            pipelineID: pipelineID,
-            taskID: task.id,
-            status: .running,
-            trigger: .startTask,
-            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
-            finishedAt: nil,
-            exitCode: nil,
-            logPath: "/tmp/looper-runs/running.log"
-        )
-        let finishedAt = Date(timeIntervalSince1970: 1_234_567_999)
-        let finishedRun = runningRun.finished(
-            status: .succeeded,
-            exitCode: nil,
-            finishedAt: finishedAt
-        )
         let recorder = TaskStatusRecorder()
 
         let store = TestStore(
             initialState: AppFeature.State(
                 tasks: [task],
-                runs: [runningRun],
                 selectedTaskID: task.id,
                 pipeline: PipelineFeature.State(
                     pipelines: [
@@ -779,15 +761,12 @@ final class AppFeatureTests: XCTestCase {
         ) {
             AppFeature()
         } withDependencies: {
-            $0.runStoreClient.saveRun = { _ in }
             $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
                 await recorder.record(taskID, status)
             }
-            $0.date.now = finishedAt
         }
 
         await store.send(.markSelectedTaskDoneButtonTapped) {
-            $0.runs = [finishedRun]
             $0.updatingTaskIDs = [task.id]
         }
         await store.receive(\.taskStatusUpdateResponse.success) {
@@ -801,7 +780,7 @@ final class AppFeatureTests: XCTestCase {
         XCTAssertEqual(events.first?.1, .done)
     }
 
-    func testTerminalEventAutoWritesDoneStatus() async {
+    func testTerminalEventAutoWritesInReviewStatus() async {
         let configuration = FeishuTaskProviderConfiguration(
             appID: "cli_xxx",
             appSecret: "secret",
@@ -821,7 +800,7 @@ final class AppFeatureTests: XCTestCase {
             id: "task-1",
             title: "Ship it",
             summary: "Summary",
-            status: .developing,
+            status: .inProgress,
             source: "Feishu",
             repoPath: URL(filePath: "/tmp/demo")
         )
@@ -867,7 +846,7 @@ final class AppFeatureTests: XCTestCase {
 
         let event = PipelineTerminalEvent(
             pipelineID: pipeline.id,
-            suggestedTaskStatus: .done,
+            suggestedTaskStatus: .inReview,
             exitCode: 0
         )
 
@@ -877,13 +856,13 @@ final class AppFeatureTests: XCTestCase {
         }
         await store.receive(\.taskStatusUpdateResponse.success) {
             $0.updatingTaskIDs = []
-            $0.tasks[id: task.id]?.status = .done
+            $0.tasks[id: task.id]?.status = .inReview
         }
 
         let events = await recorder.value()
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events.first?.0, task.id)
-        XCTAssertEqual(events.first?.1, .done)
+        XCTAssertEqual(events.first?.1, .inReview)
     }
 
     func testCreateLocalTaskInsertsTaskAndSelectsIt() async {
@@ -891,7 +870,7 @@ final class AppFeatureTests: XCTestCase {
             id: "local-task-1",
             title: "Local Task",
             summary: "Summary",
-            status: .pending,
+            status: .todo,
             source: "Local",
             repoPath: URL(filePath: "/tmp/local-project")
         )

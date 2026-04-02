@@ -33,19 +33,21 @@ final class TerminalHostView: NSView {
         activeSessionID = sessionID
 
         // Hide previously active terminal
-        if oldID != sessionID, let oldID,
-           let oldSession = registry.session(id: oldID)
-        {
-            oldSession.persistentTerminal?.isHidden = true
+        if oldID != sessionID, let oldID {
+            let oldSession = registry.session(id: oldID) ?? registry.runSession(id: oldID)
+            oldSession?.persistentTerminal?.isHidden = true
         }
 
         // Hide all if no session
         guard let sessionID,
-              let session = registry.session(id: sessionID),
+              let session = registry.session(id: sessionID) ?? registry.runSession(id: sessionID),
               let terminal = session.persistentTerminal
         else {
             // Hide all terminals when no session active
             for (_, s) in registry.sessions {
+                s.persistentTerminal?.isHidden = true
+            }
+            for (_, s) in registry.runSessions {
                 s.persistentTerminal?.isHidden = true
             }
             return

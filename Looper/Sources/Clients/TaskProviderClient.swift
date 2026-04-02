@@ -270,7 +270,7 @@ private enum FeishuTaskProvider {
             id: record.recordID,
             title: title?.ifEmpty(fallback: "Untitled Task") ?? "Untitled Task",
             summary: summary,
-            status: configuration.status(for: rawStatus) ?? .pending,
+            status: configuration.status(for: rawStatus) ?? .todo,
             source: "Feishu",
             repoPath: repoPath.flatMap(makeRepoURL(path:))
         )

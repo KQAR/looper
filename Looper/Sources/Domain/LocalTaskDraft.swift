@@ -26,7 +26,7 @@ struct LocalTaskDraft: Equatable, Sendable {
             id: UUID().uuidString,
             title: trimmedTitle,
             summary: trimmedSummary,
-            status: .pending,
+            status: .todo,
             source: "Local",
             repoPath: URL(fileURLWithPath: NSString(string: trimmedProjectPath).expandingTildeInPath)
                 .standardizedFileURL

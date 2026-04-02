@@ -10,7 +10,7 @@ struct AppView: View {
     @Bindable var store: StoreOf<AppFeature>
     let terminalRegistry: PipelineTerminalRegistry
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @State private var expandedTerminalPipelineID: UUID?
+    @State private var expandedTerminalSessionID: UUID?
     private let lang = AppLanguageManager.shared
 
     var body: some View {
@@ -313,27 +313,35 @@ struct AppView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: boardColumnSpacing) {
                 boardColumn(
-                    title: String(localized: "board.pending.title", bundle: lang.bundle),
-                    subtitle: String(localized: "board.pending.subtitle", bundle: lang.bundle),
-                    tasks: boardTasks(for: pipeline, statuses: [.pending]),
-                    emptyMessage: pendingColumnEmptyMessage
+                    title: String(localized: "board.todo.title", bundle: lang.bundle),
+                    subtitle: String(localized: "board.todo.subtitle", bundle: lang.bundle),
+                    tintColor: .gray,
+                    tasks: boardTasks(for: pipeline, statuses: [.todo]),
+                    emptyMessage: todoColumnEmptyMessage
                 )
 
                 boardColumn(
-                    title: String(localized: "board.developing.title", bundle: lang.bundle),
-                    subtitle: String(localized: "board.developing.subtitle", bundle: lang.bundle),
-                    tasks: boardTasks(for: pipeline, statuses: [.developing]),
-                    emptyMessage: String(localized: "board.developing.empty", bundle: lang.bundle),
+                    title: String(localized: "board.inProgress.title", bundle: lang.bundle),
+                    subtitle: String(localized: "board.inProgress.subtitle", bundle: lang.bundle),
+                    tintColor: .yellow,
+                    tasks: boardTasks(for: pipeline, statuses: [.inProgress]),
+                    emptyMessage: String(localized: "board.inProgress.empty", bundle: lang.bundle),
                     sessionForTask: { task in terminalSession(for: task) }
+                )
+
+                boardColumn(
+                    title: String(localized: "board.inReview.title", bundle: lang.bundle),
+                    subtitle: String(localized: "board.inReview.subtitle", bundle: lang.bundle),
+                    tintColor: .green,
+                    tasks: boardTasks(for: pipeline, statuses: [.inReview]),
+                    emptyMessage: String(localized: "board.inReview.empty", bundle: lang.bundle)
                 )
 
                 boardColumn(
                     title: String(localized: "board.done.title", bundle: lang.bundle),
                     subtitle: String(localized: "board.done.subtitle", bundle: lang.bundle),
-                    tasks: boardTasks(
-                        for: pipeline,
-                        statuses: [.done, .failed]
-                    ),
+                    tintColor: .blue,
+                    tasks: boardTasks(for: pipeline, statuses: [.done]),
                     emptyMessage: String(localized: "board.done.empty", bundle: lang.bundle)
                 )
             }
@@ -353,9 +361,10 @@ struct AppView: View {
     private func boardColumn(
         title: String,
         subtitle: String,
+        tintColor: Color = .gray,
         tasks: [LooperTask],
         emptyMessage: String,
-        sessionForTask: ((LooperTask) -> PipelineTerminalSession?)? = nil
+        sessionForTask: ((LooperTask) -> (session: PipelineTerminalSession, runID: UUID)?)? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
@@ -373,36 +382,37 @@ struct AppView: View {
                 ScrollView {
                     VStack(spacing: 10) {
                         ForEach(tasks) { task in
-                            let session = sessionForTask?(task)
-                            let taskPipelineID = pipelineForTask(task)?.id
-                            let hasSession = session != nil
+                            let result = sessionForTask?(task)
+                            let hasSession = result != nil
+                            let runSessionID = result?.runID
                             TaskBoardCard(
                                 task: task,
                                 isSelected: task.id == selectedPipelineTask?.id,
                                 isUpdating: store.updatingTaskIDs.contains(task.id),
                                 hasTerminal: hasSession,
-                                isTerminalExpanded: taskPipelineID != nil && taskPipelineID == expandedTerminalPipelineID,
+                                isTerminalExpanded: runSessionID != nil && runSessionID == expandedTerminalSessionID,
                                 onSelect: {
                                     store.send(.selectTask(task.id))
                                 },
-                                onStart: task.status == .pending
+                                onStart: task.status == .todo
                                     ? {
                                         store.send(.selectTask(task.id))
                                         store.send(.startSelectedTaskButtonTapped)
                                     } : nil,
-                                onMarkDone: task.status == .developing
+                                onMarkReview: task.status == .inProgress
                                     ? {
                                         store.send(.selectTask(task.id))
-                                        store.send(
-                                            .markSelectedTaskDoneButtonTapped
-                                        )
+                                        store.send(.markSelectedTaskInReviewButtonTapped)
                                     } : nil,
-                                onMarkFailed: task.status == .developing
+                                onMarkDone: task.status == .inReview
                                     ? {
                                         store.send(.selectTask(task.id))
-                                        store.send(
-                                            .markSelectedTaskFailedButtonTapped
-                                        )
+                                        store.send(.markSelectedTaskDoneButtonTapped)
+                                    } : nil,
+                                onReturnToTodo: task.status == .inReview
+                                    ? {
+                                        store.send(.selectTask(task.id))
+                                        store.send(.returnSelectedTaskToTodoButtonTapped)
                                     } : nil,
                                 onAttach: hasSession
                                     ? {
@@ -414,7 +424,7 @@ struct AppView: View {
                                 onExpandTerminal: hasSession
                                     ? {
                                         withAnimation(.easeInOut(duration: 0.2)) {
-                                            expandedTerminalPipelineID = taskPipelineID
+                                            expandedTerminalSessionID = runSessionID
                                         }
                                     } : nil
                             )
@@ -429,13 +439,13 @@ struct AppView: View {
             alignment: .topLeading
         )
         .padding(16)
-        .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 20))
+        .background(tintColor.opacity(0.06), in: .rect(cornerRadius: 20))
     }
 
 
     private var expandedTerminalOverlay: some View {
-        let sessionName = expandedTerminalPipelineID
-            .flatMap { terminalRegistry.session(id: $0) }?.displayTitle ?? ""
+        let sessionName = expandedTerminalSessionID
+            .flatMap { id in terminalRegistry.session(id: id) ?? terminalRegistry.runSession(id: id) }?.displayTitle ?? ""
 
         return VStack(spacing: 0) {
             HStack {
@@ -444,7 +454,7 @@ struct AppView: View {
                 Spacer()
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        expandedTerminalPipelineID = nil
+                        expandedTerminalSessionID = nil
                     }
                 } label: {
                     Image(systemName: "xmark.circle.fill")
@@ -458,7 +468,7 @@ struct AppView: View {
 
             TerminalHostRepresentable(
                 registry: terminalRegistry,
-                activeSessionID: expandedTerminalPipelineID
+                activeSessionID: expandedTerminalSessionID
             )
             .clipShape(.rect(cornerRadius: 12))
             .overlay {
@@ -501,7 +511,7 @@ struct AppView: View {
     }
 
     private var isTerminalOverlayVisible: Bool {
-        expandedTerminalPipelineID != nil
+        expandedTerminalSessionID != nil
     }
 
     private var isAllPipelinesMode: Bool {
@@ -582,10 +592,11 @@ struct AppView: View {
         return pipelineMatchesTask(selectedPipeline, task: task) ? task : nil
     }
 
-    private func terminalSession(for task: LooperTask) -> PipelineTerminalSession? {
-        guard task.status == .developing else { return nil }
-        guard let pipeline = pipelineForTask(task) else { return nil }
-        return terminalRegistry.session(id: pipeline.id)
+    private func terminalSession(for task: LooperTask) -> (session: PipelineTerminalSession, runID: UUID)? {
+        guard task.status == .inProgress else { return nil }
+        guard let run = store.runs.first(where: { $0.taskID == task.id && $0.isActive }) else { return nil }
+        guard let session = terminalRegistry.runSession(id: run.id) else { return nil }
+        return (session, run.id)
     }
 
     private func pipelineForTask(_ task: LooperTask) -> Pipeline? {
@@ -597,12 +608,12 @@ struct AppView: View {
             && selectedPipeline != nil
     }
 
-    private var pendingColumnEmptyMessage: String {
+    private var todoColumnEmptyMessage: String {
         switch store.pipeline.preferences.taskProviderConfiguration.kind {
         case .local:
-            return String(localized: "board.pending.empty.local", bundle: lang.bundle)
+            return String(localized: "board.todo.empty.local", bundle: lang.bundle)
         case .feishu:
-            return String(localized: "board.pending.empty.feishu", bundle: lang.bundle)
+            return String(localized: "board.todo.empty.feishu", bundle: lang.bundle)
         }
     }
 

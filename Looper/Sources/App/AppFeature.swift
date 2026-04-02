@@ -64,9 +64,10 @@ struct AppFeature {
         case environmentCheckResponse(EnvironmentSetupReport)
         case createLocalTaskButtonTapped(LocalTaskDraft)
         case localTaskCreateResponse(Result<LooperTask, TaskProviderFailure>)
+        case markSelectedTaskInReviewButtonTapped
         case markSelectedTaskDoneButtonTapped
         case newPipelineButtonTapped
-        case markSelectedTaskFailedButtonTapped
+        case returnSelectedTaskToTodoButtonTapped
         case onAppear
         case openLocalTaskComposerButtonTapped
         case openSettingsButtonTapped
@@ -398,7 +399,7 @@ struct AppFeature {
                         effects.append(
                             writeTaskStatus(
                                 taskID: task.id,
-                                status: .developing,
+                                status: .inProgress,
                                 configuration: state.pipeline.preferences.taskProviderConfiguration,
                                 state: &state,
                                 updateStatus: taskProviderClient.updateTaskStatus
@@ -416,7 +417,7 @@ struct AppFeature {
                 state.pendingRunTaskID = task.id
                 return .send(.pipeline(.createPipelineFromDefaults(repoPath)))
 
-            case .markSelectedTaskDoneButtonTapped:
+            case .markSelectedTaskInReviewButtonTapped:
                 guard let task = selectedTask(state: state) else { return .none }
                 guard state.pipeline.preferences.taskProviderConfiguration.canFetchTasks else {
                     state.taskProviderErrorMessage = String(localized: "error.configureProvider", bundle: .localized)
@@ -434,36 +435,41 @@ struct AppFeature {
                     ),
                     writeTaskStatus(
                         taskID: task.id,
-                        status: .done,
+                        status: .inReview,
                         configuration: state.pipeline.preferences.taskProviderConfiguration,
                         state: &state,
                         updateStatus: taskProviderClient.updateTaskStatus
                     )
                 )
 
-            case .markSelectedTaskFailedButtonTapped:
+            case .markSelectedTaskDoneButtonTapped:
                 guard let task = selectedTask(state: state) else { return .none }
                 guard state.pipeline.preferences.taskProviderConfiguration.canFetchTasks else {
                     state.taskProviderErrorMessage = String(localized: "error.configureProvider", bundle: .localized)
                     return .none
                 }
 
-                return .merge(
-                    finishActiveRun(
-                        for: task,
-                        status: .failed,
-                        exitCode: nil,
-                        state: &state,
-                        finishedAt: now,
-                        saveRun: runStoreClient.saveRun
-                    ),
-                    writeTaskStatus(
-                        taskID: task.id,
-                        status: .failed,
-                        configuration: state.pipeline.preferences.taskProviderConfiguration,
-                        state: &state,
-                        updateStatus: taskProviderClient.updateTaskStatus
-                    )
+                return writeTaskStatus(
+                    taskID: task.id,
+                    status: .done,
+                    configuration: state.pipeline.preferences.taskProviderConfiguration,
+                    state: &state,
+                    updateStatus: taskProviderClient.updateTaskStatus
+                )
+
+            case .returnSelectedTaskToTodoButtonTapped:
+                guard let task = selectedTask(state: state) else { return .none }
+                guard state.pipeline.preferences.taskProviderConfiguration.canFetchTasks else {
+                    state.taskProviderErrorMessage = String(localized: "error.configureProvider", bundle: .localized)
+                    return .none
+                }
+
+                return writeTaskStatus(
+                    taskID: task.id,
+                    status: .todo,
+                    configuration: state.pipeline.preferences.taskProviderConfiguration,
+                    state: &state,
+                    updateStatus: taskProviderClient.updateTaskStatus
                 )
 
             case let .pipeline(.createPipelineResponse(.success(pipeline))):
@@ -493,7 +499,7 @@ struct AppFeature {
                         effects.append(
                             writeTaskStatus(
                                 taskID: pendingRunTaskID,
-                                status: .developing,
+                                status: .inProgress,
                                 configuration: state.pipeline.preferences.taskProviderConfiguration,
                                 state: &state,
                                 updateStatus: taskProviderClient.updateTaskStatus
@@ -571,9 +577,9 @@ struct AppFeature {
                 guard let run = matchedRun else { return .none }
                 let taskID = run.taskID
                 guard let task = state.tasks[id: taskID] else { return .none }
-                guard task.status == .developing else { return .none }
+                guard task.status == .inProgress else { return .none }
 
-                let runStatus: Run.Status = suggestedStatus == .done ? .succeeded : .failed
+                let runStatus: Run.Status = suggestedStatus == .inReview ? .succeeded : .failed
                 let finishedRun = run.finished(
                     status: runStatus,
                     exitCode: event.exitCode,
@@ -1079,7 +1085,7 @@ private func attachTerminalsForDevelopingTasks(
     pipelines: IdentifiedArrayOf<Pipeline>,
     attachSession: @escaping @Sendable (UUID) async -> Void
 ) -> Effect<AppFeature.Action> {
-    let developingTasks = tasks.filter { $0.status == .developing }
+    let developingTasks = tasks.filter { $0.status == .inProgress }
     let developingPipelineIDs: Set<UUID> = Set(
         developingTasks.compactMap { task in
             pipelineID(for: task, in: pipelines)

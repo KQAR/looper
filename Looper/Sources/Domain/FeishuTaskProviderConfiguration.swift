@@ -9,10 +9,10 @@ struct FeishuTaskProviderConfiguration: Equatable, Codable, Sendable {
     var summaryFieldName: String = "Summary"
     var statusFieldName: String = "Status"
     var repoPathFieldName: String = "Repository"
-    var pendingStatusValue: String = "pending"
-    var developingStatusValue: String = "developing"
+    var todoStatusValue: String = "todo"
+    var inProgressStatusValue: String = "in_progress"
+    var inReviewStatusValue: String = "in_review"
     var doneStatusValue: String = "done"
-    var failedStatusValue: String = "failed"
 
     var isConfigured: Bool {
         [appID, appSecret, appToken, tableID, titleFieldName, statusFieldName]
@@ -26,31 +26,31 @@ struct FeishuTaskProviderConfiguration: Equatable, Codable, Sendable {
 
     func remoteValue(for status: LooperTask.Status) -> String {
         switch status {
-        case .pending:
-            pendingStatusValue
-        case .developing:
-            developingStatusValue
+        case .todo:
+            todoStatusValue
+        case .inProgress:
+            inProgressStatusValue
+        case .inReview:
+            inReviewStatusValue
         case .done:
             doneStatusValue
-        case .failed:
-            failedStatusValue
         }
     }
 
     func status(for rawValue: String) -> LooperTask.Status? {
         let normalized = rawValue.normalizedFeishuValue
 
-        if normalized == pendingStatusValue.normalizedFeishuValue {
-            return .pending
+        if normalized == todoStatusValue.normalizedFeishuValue {
+            return .todo
         }
-        if normalized == developingStatusValue.normalizedFeishuValue {
-            return .developing
+        if normalized == inProgressStatusValue.normalizedFeishuValue {
+            return .inProgress
+        }
+        if normalized == inReviewStatusValue.normalizedFeishuValue {
+            return .inReview
         }
         if normalized == doneStatusValue.normalizedFeishuValue {
             return .done
-        }
-        if normalized == failedStatusValue.normalizedFeishuValue {
-            return .failed
         }
 
         return nil

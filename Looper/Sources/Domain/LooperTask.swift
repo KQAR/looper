@@ -9,26 +9,26 @@ struct LooperTask: Codable, Equatable, Identifiable, Sendable {
     var repoPath: URL?
 
     enum Status: String, Codable, Equatable, Sendable {
-        case pending
-        case developing
+        case todo
+        case inProgress = "in_progress"
+        case inReview = "in_review"
         case done
-        case failed
 
         var label: String {
             switch self {
-            case .pending: "Pending"
-            case .developing: "Running"
+            case .todo: "Todo"
+            case .inProgress: "In Progress"
+            case .inReview: "In Review"
             case .done: "Done"
-            case .failed: "Failed"
             }
         }
 
         func localizedLabel(bundle: Bundle) -> String {
             switch self {
-            case .pending: String(localized: "status.pending", bundle: bundle)
-            case .developing: String(localized: "status.running", bundle: bundle)
+            case .todo: String(localized: "status.todo", bundle: bundle)
+            case .inProgress: String(localized: "status.inProgress", bundle: bundle)
+            case .inReview: String(localized: "status.inReview", bundle: bundle)
             case .done: String(localized: "status.done", bundle: bundle)
-            case .failed: String(localized: "status.failed", bundle: bundle)
             }
         }
     }

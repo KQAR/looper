@@ -346,7 +346,7 @@ extension PipelineTerminalSession:
         guard pipeline.tracksAgentLifecycle else { return }
 
         let exitCode = consumeExitCode()
-        let suggestedTaskStatus: LooperTask.Status = (exitCode ?? 1) == 0 ? .done : .failed
+        let suggestedTaskStatus: LooperTask.Status = (exitCode ?? 1) == 0 ? .inReview : .todo
         eventSink(
             PipelineTerminalEvent(
                 pipelineID: pipeline.id,

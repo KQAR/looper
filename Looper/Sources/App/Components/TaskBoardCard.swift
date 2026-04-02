@@ -9,8 +9,9 @@ struct TaskBoardCard: View {
     var isTerminalExpanded: Bool = false
     let onSelect: () -> Void
     let onStart: (() -> Void)?
+    let onMarkReview: (() -> Void)?
     let onMarkDone: (() -> Void)?
-    let onMarkFailed: (() -> Void)?
+    let onReturnToTodo: (() -> Void)?
     var onAttach: (() -> Void)? = nil
     var onExpandTerminal: (() -> Void)? = nil
 
@@ -98,6 +99,15 @@ struct TaskBoardCard: View {
             }
         }
 
+        if let onMarkReview {
+            Button {
+                onMarkReview()
+                isActionMenuPresented = false
+            } label: {
+                Label(String(localized: "task.markReview", bundle: lang.bundle), systemImage: "eye")
+            }
+        }
+
         if let onMarkDone {
             Button {
                 onMarkDone()
@@ -107,12 +117,12 @@ struct TaskBoardCard: View {
             }
         }
 
-        if let onMarkFailed {
+        if let onReturnToTodo {
             Button {
-                onMarkFailed()
+                onReturnToTodo()
                 isActionMenuPresented = false
             } label: {
-                Label(String(localized: "task.fail", bundle: lang.bundle), systemImage: "xmark.circle")
+                Label(String(localized: "task.returnToTodo", bundle: lang.bundle), systemImage: "arrow.uturn.backward")
             }
         }
 

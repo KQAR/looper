@@ -155,7 +155,58 @@
         }
       }
     },
-    "board.developing.empty": {
+    "board.done.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Approved work will accumulate here."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已通过的工作将在这里累积。"
+          }
+        }
+      }
+    },
+    "board.done.subtitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Completed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已完成"
+          }
+        }
+      }
+    },
+    "board.done.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Done"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已完成"
+          }
+        }
+      }
+    },
+    "board.inProgress.empty": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -172,7 +223,7 @@
         }
       }
     },
-    "board.developing.subtitle": {
+    "board.inProgress.subtitle": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -189,7 +240,7 @@
         }
       }
     },
-    "board.developing.title": {
+    "board.inProgress.title": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -206,64 +257,64 @@
         }
       }
     },
-    "board.done.empty": {
+    "board.inReview.empty": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Finished work will accumulate here for quick review."
+            "value": "Tasks awaiting review will appear here."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "完成的工作将在这里累积，方便快速回顾。"
+            "value": "等待审核的任务将显示在这里。"
           }
         }
       }
     },
-    "board.done.subtitle": {
+    "board.inReview.subtitle": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Done or failed"
+            "value": "Awaiting review"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "完成或失败"
+            "value": "等待审核"
           }
         }
       }
     },
-    "board.done.title": {
+    "board.inReview.title": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Finished"
+            "value": "In Review"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "已结束"
+            "value": "审核中"
           }
         }
       }
     },
-    "board.pending.empty.feishu": {
+    "board.todo.empty.feishu": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No pending task is currently mapped into this pipeline."
+            "value": "No todo task is currently mapped into this pipeline."
           }
         },
         "zh-Hans": {
@@ -274,7 +325,7 @@
         }
       }
     },
-    "board.pending.empty.local": {
+    "board.todo.empty.local": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -291,7 +342,7 @@
         }
       }
     },
-    "board.pending.subtitle": {
+    "board.todo.subtitle": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -308,19 +359,19 @@
         }
       }
     },
-    "board.pending.title": {
+    "board.todo.title": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Not Started"
+            "value": "Todo"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "未开始"
+            "value": "待办"
           }
         }
       }
@@ -1090,53 +1141,53 @@
         }
       }
     },
-    "status.failed": {
+    "status.inProgress": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Failed"
+            "value": "In Progress"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "已失败"
+            "value": "进行中"
           }
         }
       }
     },
-    "status.pending": {
+    "status.inReview": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Pending"
+            "value": "In Review"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "待处理"
+            "value": "审核中"
           }
         }
       }
     },
-    "status.running": {
+    "status.todo": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Running"
+            "value": "Todo"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "运行中"
+            "value": "待办"
           }
         }
       }
@@ -1158,19 +1209,36 @@
         }
       }
     },
-    "task.fail": {
+    "task.markReview": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fail"
+            "value": "Mark for Review"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "失败"
+            "value": "提交审核"
+          }
+        }
+      }
+    },
+    "task.returnToTodo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Return to Todo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退回待办"
           }
         }
       }

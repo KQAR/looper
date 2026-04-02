@@ -124,6 +124,46 @@ actor AppDatabase {
             }
         }
 
+        // Repair: the "addParallelRunSupport" migration may have been recorded
+        // as applied while the ALTER TABLE statements silently failed to persist.
+        // This migration checks for missing columns and adds them idempotently.
+        migrator.registerMigration("repairParallelRunColumns") { db in
+            let pipelineCols = try Set(db.columns(in: PipelineRecord.databaseTableName).map(\.name))
+            if !pipelineCols.contains("maxConcurrentRuns") {
+                try db.alter(table: PipelineRecord.databaseTableName) { table in
+                    table.add(column: "maxConcurrentRuns", .integer)
+                        .notNull()
+                        .defaults(to: Pipeline.defaultMaxConcurrentRuns)
+                }
+            }
+            if !pipelineCols.contains("runTimeoutSeconds") {
+                try db.alter(table: PipelineRecord.databaseTableName) { table in
+                    table.add(column: "runTimeoutSeconds", .double)
+                        .notNull()
+                        .defaults(to: Pipeline.defaultRunTimeoutSeconds)
+                }
+            }
+            if !pipelineCols.contains("resumeCommand") {
+                try db.alter(table: PipelineRecord.databaseTableName) { table in
+                    table.add(column: "resumeCommand", .text)
+                        .notNull()
+                        .defaults(to: "")
+                }
+            }
+
+            let runCols = try Set(db.columns(in: RunRecord.databaseTableName).map(\.name))
+            if !runCols.contains("worktreePath") {
+                try db.alter(table: RunRecord.databaseTableName) { table in
+                    table.add(column: "worktreePath", .text)
+                }
+            }
+            if !runCols.contains("sessionID") {
+                try db.alter(table: RunRecord.databaseTableName) { table in
+                    table.add(column: "sessionID", .text)
+                }
+            }
+        }
+
         return migrator
     }
 }
