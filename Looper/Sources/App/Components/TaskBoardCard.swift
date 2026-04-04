@@ -7,6 +7,7 @@ struct TaskBoardCard: View {
     let isUpdating: Bool
     var hasTerminal: Bool = false
     var isTerminalExpanded: Bool = false
+    var activeRun: Run? = nil
     let onSelect: () -> Void
     let onStart: (() -> Void)?
     let onMarkReview: (() -> Void)?
@@ -14,6 +15,7 @@ struct TaskBoardCard: View {
     let onReturnToTodo: (() -> Void)?
     var onAttach: (() -> Void)? = nil
     var onExpandTerminal: (() -> Void)? = nil
+    var onCancelRun: (() -> Void)? = nil
 
     @State private var isActionMenuPresented = false
     private let lang = AppLanguageManager.shared
@@ -33,6 +35,10 @@ struct TaskBoardCard: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .lineLimit(3)
+
+            if let run = activeRun, run.isActive {
+                agentProgressView(run: run)
+            }
 
             HStack(spacing: 8) {
                 Text(task.repoPath?.lastPathComponent ?? String(localized: "task.noProject", bundle: lang.bundle))
@@ -86,6 +92,67 @@ struct TaskBoardCard: View {
             actionMenuContent
                 .padding(4)
         }
+    }
+
+    @ViewBuilder
+    private func agentProgressView(run: Run) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let activity = run.currentActivity {
+                HStack(spacing: 4) {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.orange)
+                    Text(activity)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            HStack(spacing: 12) {
+                if let count = run.toolCallCount, count > 0 {
+                    Label("\(count)", systemImage: "wrench.and.screwdriver")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let cost = run.costUSD, cost > 0 {
+                    Label(String(format: "$%.2f", cost), systemImage: "dollarsign.circle")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                let elapsed = Date.now.timeIntervalSince(run.startedAt)
+                if elapsed > 0 {
+                    Label(formatElapsed(elapsed), systemImage: "clock")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if let onCancelRun {
+                    Button {
+                        onCancelRun()
+                    } label: {
+                        Image(systemName: "stop.circle")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .tint(.red)
+                }
+            }
+        }
+        .padding(8)
+        .background(.ultraThinMaterial, in: .rect(cornerRadius: 8))
+    }
+
+    private func formatElapsed(_ interval: TimeInterval) -> String {
+        let minutes = Int(interval) / 60
+        let seconds = Int(interval) % 60
+        return minutes > 0 ? "\(minutes)m \(seconds)s" : "\(seconds)s"
     }
 
     @ViewBuilder

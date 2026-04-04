@@ -48,6 +48,9 @@ struct Run: Equatable, Identifiable, Sendable {
     var finishedAt: Date?
     var exitCode: Int32?
     var logPath: String
+    var costUSD: Double?
+    var toolCallCount: Int?
+    var currentActivity: String?
 
     var isActive: Bool {
         status == .running

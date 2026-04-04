@@ -15,6 +15,8 @@ struct RunRecord: Codable, FetchableRecord, MutablePersistableRecord, TableRecor
     var finishedAt: Date?
     var exitCode: Int32?
     var logPath: String
+    var costUSD: Double?
+    var toolCallCount: Int?
 
     init(run: Run) {
         self.id = run.id.uuidString
@@ -28,6 +30,8 @@ struct RunRecord: Codable, FetchableRecord, MutablePersistableRecord, TableRecor
         self.finishedAt = run.finishedAt
         self.exitCode = run.exitCode
         self.logPath = run.logPath
+        self.costUSD = run.costUSD
+        self.toolCallCount = run.toolCallCount
     }
 
     var run: Run {
@@ -42,7 +46,9 @@ struct RunRecord: Codable, FetchableRecord, MutablePersistableRecord, TableRecor
             startedAt: startedAt,
             finishedAt: finishedAt,
             exitCode: exitCode,
-            logPath: logPath
+            logPath: logPath,
+            costUSD: costUSD,
+            toolCallCount: toolCallCount
         )
     }
 }

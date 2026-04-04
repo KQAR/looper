@@ -164,6 +164,20 @@ actor AppDatabase {
             }
         }
 
+        migrator.registerMigration("addAgentProcessFields") { db in
+            let runCols = try Set(db.columns(in: RunRecord.databaseTableName).map(\.name))
+            if !runCols.contains("costUSD") {
+                try db.alter(table: RunRecord.databaseTableName) { table in
+                    table.add(column: "costUSD", .double)
+                }
+            }
+            if !runCols.contains("toolCallCount") {
+                try db.alter(table: RunRecord.databaseTableName) { table in
+                    table.add(column: "toolCallCount", .integer)
+                }
+            }
+        }
+
         return migrator
     }
 }

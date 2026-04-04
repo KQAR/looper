@@ -906,6 +906,322 @@ final class AppFeatureTests: XCTestCase {
         }
     }
 
+    // MARK: - Agent Process Events
+
+    func testAgentToolUseUpdatesRunActivity() async {
+        let pipeline = Pipeline(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+        let task = LooperTask(
+            id: "task-1",
+            title: "Fix bug",
+            summary: "Summary",
+            status: .inProgress,
+            source: "Local",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let runID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
+        let run = Run(
+            id: runID,
+            pipelineID: pipeline.id,
+            taskID: task.id,
+            status: .running,
+            trigger: .startTask,
+            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "/tmp/looper-runs/\(runID.uuidString).log"
+        )
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                runs: [run],
+                selectedTaskID: task.id,
+                pipeline: PipelineFeature.State(
+                    pipelines: [pipeline],
+                    selectedPipelineID: pipeline.id
+                )
+            )
+        ) {
+            AppFeature()
+        }
+
+        await store.send(.agentEventReceived(runID: runID, .initialized(sessionID: "sess-1", model: "opus"))) {
+            $0.runs[id: runID]?.sessionID = "sess-1"
+        }
+
+        await store.send(.agentEventReceived(runID: runID, .toolUse(name: "Read", inputSummary: "/src/main.swift"))) {
+            $0.runs[id: runID]?.toolCallCount = 1
+            $0.runs[id: runID]?.currentActivity = "Read: /src/main.swift"
+        }
+
+        await store.send(.agentEventReceived(runID: runID, .toolResult(isError: false)))
+
+        await store.send(.agentEventReceived(runID: runID, .toolUse(name: "Edit", inputSummary: "/src/main.swift"))) {
+            $0.runs[id: runID]?.toolCallCount = 2
+            $0.runs[id: runID]?.currentActivity = "Edit: /src/main.swift"
+        }
+    }
+
+    func testAgentResultSuccessTransitionsToInReview() async {
+        let configuration = FeishuTaskProviderConfiguration(
+            appID: "cli_xxx",
+            appSecret: "secret",
+            appToken: "app_token",
+            tableID: "tbl_tasks"
+        )
+        let providerConfiguration = TaskProviderConfiguration(kind: .feishu, feishu: configuration)
+        let pipeline = Pipeline(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+        let task = LooperTask(
+            id: "task-1",
+            title: "Fix bug",
+            summary: "Summary",
+            status: .inProgress,
+            source: "Feishu",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let runID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
+        let run = Run(
+            id: runID,
+            pipelineID: pipeline.id,
+            taskID: task.id,
+            status: .running,
+            trigger: .startTask,
+            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "/tmp/looper-runs/\(runID.uuidString).log"
+        )
+        let finishedAt = Date(timeIntervalSince1970: 1_234_567_999)
+        let recorder = TaskStatusRecorder()
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                runs: [run],
+                selectedTaskID: task.id,
+                pipeline: PipelineFeature.State(
+                    pipelines: [pipeline],
+                    selectedPipelineID: pipeline.id,
+                    preferences: AppPreferences(taskProviderConfiguration: providerConfiguration)
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.runStoreClient.saveRun = { _ in }
+            $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
+                await recorder.record(taskID, status)
+            }
+            $0.date.now = finishedAt
+        }
+
+        let agentResult = AgentResult(
+            sessionID: "sess-1",
+            isError: false,
+            durationMs: 12345,
+            costUSD: 0.05,
+            numTurns: 3,
+            resultText: "Done"
+        )
+
+        await store.send(.agentEventReceived(runID: runID, .result(agentResult))) {
+            var finished = run
+            finished.sessionID = "sess-1"
+            finished.costUSD = 0.05
+            finished.currentActivity = nil
+            finished.status = .succeeded
+            finished.exitCode = 0
+            finished.finishedAt = finishedAt
+            $0.runs[id: runID] = finished
+            $0.updatingTaskIDs = [task.id]
+        }
+        await store.receive(\.taskStatusUpdateResponse.success) {
+            $0.updatingTaskIDs = []
+            $0.tasks[id: task.id]?.status = .inReview
+        }
+
+        let events = await recorder.value()
+        XCTAssertEqual(events.first?.1, .inReview)
+    }
+
+    func testAgentResultFailureTransitionsToTodo() async {
+        let configuration = FeishuTaskProviderConfiguration(
+            appID: "cli_xxx",
+            appSecret: "secret",
+            appToken: "app_token",
+            tableID: "tbl_tasks"
+        )
+        let providerConfiguration = TaskProviderConfiguration(kind: .feishu, feishu: configuration)
+        let pipeline = Pipeline(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+        let task = LooperTask(
+            id: "task-1",
+            title: "Fix bug",
+            summary: "Summary",
+            status: .inProgress,
+            source: "Feishu",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let runID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
+        let run = Run(
+            id: runID,
+            pipelineID: pipeline.id,
+            taskID: task.id,
+            status: .running,
+            trigger: .startTask,
+            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "/tmp/looper-runs/\(runID.uuidString).log"
+        )
+        let finishedAt = Date(timeIntervalSince1970: 1_234_567_999)
+        let recorder = TaskStatusRecorder()
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                runs: [run],
+                selectedTaskID: task.id,
+                pipeline: PipelineFeature.State(
+                    pipelines: [pipeline],
+                    selectedPipelineID: pipeline.id,
+                    preferences: AppPreferences(taskProviderConfiguration: providerConfiguration)
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.runStoreClient.saveRun = { _ in }
+            $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
+                await recorder.record(taskID, status)
+            }
+            $0.date.now = finishedAt
+        }
+
+        let agentResult = AgentResult(
+            sessionID: "sess-1",
+            isError: true,
+            durationMs: 500,
+            costUSD: 0.01,
+            numTurns: 1,
+            resultText: "Error"
+        )
+
+        await store.send(.agentEventReceived(runID: runID, .result(agentResult))) {
+            var finished = run
+            finished.sessionID = "sess-1"
+            finished.costUSD = 0.01
+            finished.currentActivity = nil
+            finished.status = .failed
+            finished.exitCode = 1
+            finished.finishedAt = finishedAt
+            $0.runs[id: runID] = finished
+            $0.updatingTaskIDs = [task.id]
+        }
+        await store.receive(\.taskStatusUpdateResponse.success) {
+            $0.updatingTaskIDs = []
+            $0.tasks[id: task.id]?.status = .todo
+        }
+
+        let events = await recorder.value()
+        XCTAssertEqual(events.first?.1, .todo)
+    }
+
+    func testCancelRunCallsAgentProcessCancel() async {
+        let pipeline = Pipeline(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+        let runID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
+        let run = Run(
+            id: runID,
+            pipelineID: pipeline.id,
+            taskID: "task-1",
+            status: .running,
+            trigger: .startTask,
+            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "/tmp/looper-runs/\(runID.uuidString).log"
+        )
+
+        actor CancelRecorder {
+            var cancelledIDs: [UUID] = []
+            func record(_ id: UUID) { cancelledIDs.append(id) }
+            func value() -> [UUID] { cancelledIDs }
+        }
+        let cancelRecorder = CancelRecorder()
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                runs: [run],
+                pipeline: PipelineFeature.State(
+                    pipelines: [pipeline],
+                    selectedPipelineID: pipeline.id
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.agentProcessClient.cancel = { runID in
+                await cancelRecorder.record(runID)
+            }
+        }
+
+        await store.send(.cancelRunButtonTapped(runID))
+
+        let cancelled = await cancelRecorder.value()
+        XCTAssertEqual(cancelled, [runID])
+    }
+
+    func testCancelInactiveRunIsNoOp() async {
+        let runID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
+        let run = Run(
+            id: runID,
+            pipelineID: UUID(),
+            taskID: "task-1",
+            status: .succeeded,
+            trigger: .startTask,
+            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
+            finishedAt: Date(timeIntervalSince1970: 1_234_567_999),
+            exitCode: 0,
+            logPath: "/tmp/looper-runs/\(runID.uuidString).log"
+        )
+
+        let store = TestStore(
+            initialState: AppFeature.State(runs: [run])
+        ) {
+            AppFeature()
+        }
+
+        // Should not call agentProcessClient.cancel since run is not active
+        await store.send(.cancelRunButtonTapped(runID))
+    }
+
     func testPipelineDraftInfersNameFromInput() {
         let namedDraft = PipelineDraft(
             name: "Payment Hardening",

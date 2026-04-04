@@ -9,6 +9,7 @@ struct AppFeature {
     @Dependency(\.taskProviderClient) var taskProviderClient
     @Dependency(\.pipelineTerminalClient) var pipelineTerminalClient
     @Dependency(\.gitWorktreeClient) var gitWorktreeClient
+    @Dependency(\.agentProcessClient) var agentProcessClient
     @Dependency(\.uuid) var uuid
 
     struct TaskStatusUpdate: Equatable, Sendable {
@@ -54,7 +55,10 @@ struct AppFeature {
         var pipeline = PipelineFeature.State()
     }
 
-    enum Action {
+    enum Action: BindableAction {
+        case binding(BindingAction<State>)
+        case agentEventReceived(runID: UUID, AgentEvent)
+        case cancelRunButtonTapped(UUID)
         case cancelDeletePipeline
         case confirmDeletePipeline
         case deletePipelineMenuTapped(Pipeline.ID)
@@ -89,12 +93,26 @@ struct AppFeature {
     }
 
     var body: some ReducerOf<Self> {
+        BindingReducer()
+
         Scope(state: \.pipeline, action: \.pipeline) {
             PipelineFeature()
         }
 
         Reduce { state, action in
             switch action {
+            case .binding:
+                return .none
+
+            case let .agentEventReceived(runID, event):
+                return handleAgentEvent(runID: runID, event: event, state: &state)
+
+            case let .cancelRunButtonTapped(runID):
+                guard let run = state.runs[id: runID], run.isActive else { return .none }
+                return .run { [cancelAgent = agentProcessClient.cancel] _ in
+                    await cancelAgent(runID)
+                }
+
             case let .deletePipelineMenuTapped(id):
                 state.pipelinePendingDeletionID = id
                 return .none
@@ -676,9 +694,93 @@ extension AppFeature {
             saveRun: runStoreClient.saveRun,
             createWorktree: gitWorktreeClient.createWorktree,
             writeTaskContext: gitWorktreeClient.writeTaskContext,
+            executeAgent: agentProcessClient.execute,
+            // Keep terminal for pipeline-level shell (fallback)
             upsertRunSession: pipelineTerminalClient.upsertRunSession,
             bootstrapRunSession: pipelineTerminalClient.bootstrapRunSession
         )
+    }
+
+    func handleAgentEvent(
+        runID: UUID,
+        event: AgentEvent,
+        state: inout State
+    ) -> Effect<Action> {
+        guard var run = state.runs[id: runID] else { return .none }
+
+        switch event {
+        case let .initialized(sessionID, _):
+            run.sessionID = sessionID
+            state.runs[id: runID] = run
+            return .none
+
+        case let .toolUse(name, inputSummary):
+            run.toolCallCount = (run.toolCallCount ?? 0) + 1
+            let summary = inputSummary.isEmpty ? name : "\(name): \(inputSummary)"
+            run.currentActivity = String(summary.prefix(120))
+            state.runs[id: runID] = run
+            return .none
+
+        case .toolResult:
+            return .none
+
+        case .text:
+            return .none
+
+        case let .result(agentResult):
+            run.sessionID = agentResult.sessionID.isEmpty ? run.sessionID : agentResult.sessionID
+            run.costUSD = agentResult.costUSD
+            run.currentActivity = nil
+
+            let runStatus: Run.Status = agentResult.isError ? .failed : .succeeded
+            let suggestedTaskStatus: LooperTask.Status = agentResult.isError ? .todo : .inReview
+
+            let finishedRun = run.finished(
+                status: runStatus,
+                exitCode: agentResult.isError ? 1 : 0,
+                finishedAt: now
+            )
+            state.runs[id: runID] = finishedRun
+
+            let taskID = run.taskID
+            guard let task = state.tasks[id: taskID], task.status == .inProgress else {
+                return .run { [saveRun = runStoreClient.saveRun] send in
+                    do { try await saveRun(finishedRun) } catch {
+                        await send(.runPersistenceFailed(.init(description: error.localizedDescription)))
+                    }
+                }
+            }
+
+            let hasOtherActiveRuns = state.runs.contains {
+                $0.taskID == taskID && $0.isActive && $0.id != runID
+            }
+
+            let saveEffect: Effect<Action> = .run { [saveRun = runStoreClient.saveRun] send in
+                do { try await saveRun(finishedRun) } catch {
+                    await send(.runPersistenceFailed(.init(description: error.localizedDescription)))
+                }
+            }
+
+            if state.pipeline.preferences.taskProviderConfiguration.canFetchTasks,
+               !hasOtherActiveRuns
+            {
+                return .merge(
+                    saveEffect,
+                    writeTaskStatus(
+                        taskID: taskID,
+                        status: suggestedTaskStatus,
+                        configuration: state.pipeline.preferences.taskProviderConfiguration,
+                        state: &state,
+                        updateStatus: taskProviderClient.updateTaskStatus
+                    )
+                )
+            }
+
+            if !hasOtherActiveRuns {
+                updateTaskStatus(id: taskID, status: suggestedTaskStatus, state: &state)
+            }
+            return saveEffect
+        }
     }
 }
 
@@ -927,11 +1029,17 @@ private func startRunWithWorktreeEffect(
     saveRun: @escaping @Sendable (Run) async throws -> Void,
     createWorktree: @escaping @Sendable (String, String) async throws -> String,
     writeTaskContext: @escaping @Sendable (String, LooperTask) async throws -> Void,
+    executeAgent: @escaping @Sendable (AgentProcessRequest) async -> AsyncStream<AgentEvent>,
     upsertRunSession: @escaping @Sendable (UUID, Pipeline, String, Bool) async -> Void,
     bootstrapRunSession: @escaping @Sendable (UUID) async -> Void
 ) -> Effect<AppFeature.Action> {
     let branchName = worktreeBranchName(taskID: task.id, runID: runID)
     let isResume = trigger == .resumeTask && reuseWorktreePath != nil
+    let previousSessionID = isResume
+        ? state.runs.first(where: {
+            $0.taskID == task.id && $0.pipelineID == pipeline.id && $0.status == .failed
+        })?.sessionID
+        : nil
 
     // Create the run record immediately (worktreePath set later via effect)
     let run = Run(
@@ -948,6 +1056,19 @@ private func startRunWithWorktreeEffect(
     )
     state.runs.insert(run, at: 0)
 
+    let agentCommand = pipeline.agentCommand
+    let taskDescription = """
+    # Task Context
+
+    **ID**: \(task.id)
+    **Title**: \(task.title)
+    **Source**: \(task.source)
+
+    ## Description
+
+    \(task.summary)
+    """
+
     return .run { send in
         do {
             // 1. Create or reuse git worktree
@@ -961,16 +1082,27 @@ private func startRunWithWorktreeEffect(
             // 2. Write/refresh TASK.md context
             try await writeTaskContext(worktreePath, task)
 
-            // 3. Create terminal session for this run (with resume flag)
-            await upsertRunSession(runID, pipeline, worktreePath, isResume)
-
-            // 4. Bootstrap (send attach script) the terminal
-            await bootstrapRunSession(runID)
-
-            // 5. Persist run with worktreePath
+            // 3. Persist run with worktreePath
             var updatedRun = run
             updatedRun.worktreePath = worktreePath
             try await saveRun(updatedRun)
+
+            // 4. Also create a pipeline-level terminal (for manual debug access)
+            await upsertRunSession(runID, pipeline, worktreePath, isResume)
+
+            // 5. Launch agent process with structured JSON output
+            let request = AgentProcessRequest(
+                runID: runID,
+                workingDirectory: worktreePath,
+                taskDescription: taskDescription,
+                agentCommand: agentCommand,
+                resumeSessionID: previousSessionID
+            )
+
+            let events = await executeAgent(request)
+            for await event in events {
+                await send(.agentEventReceived(runID: runID, event))
+            }
         } catch {
             await send(
                 .runPersistenceFailed(.init(description: error.localizedDescription))

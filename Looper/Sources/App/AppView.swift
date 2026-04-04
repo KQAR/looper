@@ -326,7 +326,8 @@ struct AppView: View {
                     tintColor: .yellow,
                     tasks: boardTasks(for: pipeline, statuses: [.inProgress]),
                     emptyMessage: String(localized: "board.inProgress.empty", bundle: lang.bundle),
-                    sessionForTask: { task in terminalSession(for: task) }
+                    sessionForTask: { task in terminalSession(for: task) },
+                    activeRunForTask: { task in activeRunForTask(task) }
                 )
 
                 boardColumn(
@@ -364,7 +365,8 @@ struct AppView: View {
         tintColor: Color = .gray,
         tasks: [LooperTask],
         emptyMessage: String,
-        sessionForTask: ((LooperTask) -> (session: PipelineTerminalSession, runID: UUID)?)? = nil
+        sessionForTask: ((LooperTask) -> (session: PipelineTerminalSession, runID: UUID)?)? = nil,
+        activeRunForTask: ((LooperTask) -> Run?)? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
@@ -385,12 +387,14 @@ struct AppView: View {
                             let result = sessionForTask?(task)
                             let hasSession = result != nil
                             let runSessionID = result?.runID
+                            let run = activeRunForTask?(task)
                             TaskBoardCard(
                                 task: task,
                                 isSelected: task.id == selectedPipelineTask?.id,
                                 isUpdating: store.updatingTaskIDs.contains(task.id),
                                 hasTerminal: hasSession,
                                 isTerminalExpanded: runSessionID != nil && runSessionID == expandedTerminalSessionID,
+                                activeRun: run,
                                 onSelect: {
                                     store.send(.selectTask(task.id))
                                 },
@@ -425,6 +429,12 @@ struct AppView: View {
                                     ? {
                                         withAnimation(.easeInOut(duration: 0.2)) {
                                             expandedTerminalSessionID = runSessionID
+                                        }
+                                    } : nil,
+                                onCancelRun: run?.isActive == true
+                                    ? {
+                                        if let runID = run?.id {
+                                            store.send(.cancelRunButtonTapped(runID))
                                         }
                                     } : nil
                             )
@@ -597,6 +607,10 @@ struct AppView: View {
         guard let run = store.runs.first(where: { $0.taskID == task.id && $0.isActive }) else { return nil }
         guard let session = terminalRegistry.runSession(id: run.id) else { return nil }
         return (session, run.id)
+    }
+
+    private func activeRunForTask(_ task: LooperTask) -> Run? {
+        store.runs.first { $0.taskID == task.id && $0.isActive }
     }
 
     private func pipelineForTask(_ task: LooperTask) -> Pipeline? {
