@@ -1222,6 +1222,290 @@ final class AppFeatureTests: XCTestCase {
         await store.send(.cancelRunButtonTapped(runID))
     }
 
+    // MARK: - Worktree Cleanup
+
+    func testAgentSuccessRemovesWorktree() async {
+        let configuration = FeishuTaskProviderConfiguration(
+            appID: "cli_xxx",
+            appSecret: "secret",
+            appToken: "app_token",
+            tableID: "tbl_tasks"
+        )
+        let providerConfiguration = TaskProviderConfiguration(kind: .feishu, feishu: configuration)
+        let pipeline = Pipeline(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+        let task = LooperTask(
+            id: "task-1",
+            title: "Fix bug",
+            summary: "Summary",
+            status: .inProgress,
+            source: "Feishu",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let runID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
+        let run = Run(
+            id: runID,
+            pipelineID: pipeline.id,
+            taskID: task.id,
+            status: .running,
+            trigger: .startTask,
+            worktreePath: "/tmp/looper-worktrees/demo/looper/task-1-9E24E1C8",
+            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "/tmp/looper-runs/\(runID.uuidString).log"
+        )
+        let finishedAt = Date(timeIntervalSince1970: 1_234_567_999)
+
+        actor WorktreeRecorder {
+            var removedPaths: [String] = []
+            func record(_ path: String) { removedPaths.append(path) }
+            func value() -> [String] { removedPaths }
+        }
+        let recorder = WorktreeRecorder()
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                runs: [run],
+                selectedTaskID: task.id,
+                pipeline: PipelineFeature.State(
+                    pipelines: [pipeline],
+                    selectedPipelineID: pipeline.id,
+                    preferences: AppPreferences(taskProviderConfiguration: providerConfiguration)
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.runStoreClient.saveRun = { _ in }
+            $0.taskProviderClient.updateTaskStatus = { _, _, _ in }
+            $0.gitWorktreeClient.removeWorktree = { _, worktreePath in
+                await recorder.record(worktreePath)
+            }
+            $0.date.now = finishedAt
+        }
+
+        let agentResult = AgentResult(
+            sessionID: "sess-1",
+            isError: false,
+            durationMs: 12345,
+            costUSD: 0.05,
+            numTurns: 3,
+            resultText: "Done"
+        )
+
+        await store.send(.agentEventReceived(runID: runID, .result(agentResult))) {
+            var finished = run
+            finished.sessionID = "sess-1"
+            finished.costUSD = 0.05
+            finished.currentActivity = nil
+            finished.status = .succeeded
+            finished.exitCode = 0
+            finished.finishedAt = finishedAt
+            $0.runs[id: runID] = finished
+            $0.updatingTaskIDs = [task.id]
+        }
+        await store.receive(\.taskStatusUpdateResponse.success) {
+            $0.updatingTaskIDs = []
+            $0.tasks[id: task.id]?.status = .inReview
+        }
+
+        let removed = await recorder.value()
+        XCTAssertEqual(removed, ["/tmp/looper-worktrees/demo/looper/task-1-9E24E1C8"])
+    }
+
+    func testAgentFailurePreservesWorktree() async {
+        let configuration = FeishuTaskProviderConfiguration(
+            appID: "cli_xxx",
+            appSecret: "secret",
+            appToken: "app_token",
+            tableID: "tbl_tasks"
+        )
+        let providerConfiguration = TaskProviderConfiguration(kind: .feishu, feishu: configuration)
+        let pipeline = Pipeline(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+        let task = LooperTask(
+            id: "task-1",
+            title: "Fix bug",
+            summary: "Summary",
+            status: .inProgress,
+            source: "Feishu",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let runID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
+        let run = Run(
+            id: runID,
+            pipelineID: pipeline.id,
+            taskID: task.id,
+            status: .running,
+            trigger: .startTask,
+            worktreePath: "/tmp/looper-worktrees/demo/looper/task-1-9E24E1C8",
+            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "/tmp/looper-runs/\(runID.uuidString).log"
+        )
+        let finishedAt = Date(timeIntervalSince1970: 1_234_567_999)
+
+        actor WorktreeRecorder {
+            var removedPaths: [String] = []
+            func record(_ path: String) { removedPaths.append(path) }
+            func value() -> [String] { removedPaths }
+        }
+        let recorder = WorktreeRecorder()
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                runs: [run],
+                selectedTaskID: task.id,
+                pipeline: PipelineFeature.State(
+                    pipelines: [pipeline],
+                    selectedPipelineID: pipeline.id,
+                    preferences: AppPreferences(taskProviderConfiguration: providerConfiguration)
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.runStoreClient.saveRun = { _ in }
+            $0.taskProviderClient.updateTaskStatus = { _, _, _ in }
+            $0.gitWorktreeClient.removeWorktree = { _, worktreePath in
+                await recorder.record(worktreePath)
+            }
+            $0.date.now = finishedAt
+        }
+
+        let agentResult = AgentResult(
+            sessionID: "sess-1",
+            isError: true,
+            durationMs: 500,
+            costUSD: 0.01,
+            numTurns: 1,
+            resultText: "Out of tokens"
+        )
+
+        await store.send(.agentEventReceived(runID: runID, .result(agentResult))) {
+            var finished = run
+            finished.sessionID = "sess-1"
+            finished.costUSD = 0.01
+            finished.currentActivity = nil
+            finished.status = .failed
+            finished.exitCode = 1
+            finished.finishedAt = finishedAt
+            $0.runs[id: runID] = finished
+            $0.updatingTaskIDs = [task.id]
+        }
+        await store.receive(\.taskStatusUpdateResponse.success) {
+            $0.updatingTaskIDs = []
+            $0.tasks[id: task.id]?.status = .todo
+        }
+
+        let removed = await recorder.value()
+        XCTAssertTrue(removed.isEmpty, "Failed run worktree should be preserved for debugging")
+    }
+
+    func testMarkDoneCleansUpAllWorktrees() async {
+        let configuration = FeishuTaskProviderConfiguration(
+            appID: "cli_xxx",
+            appSecret: "secret",
+            appToken: "app_token",
+            tableID: "tbl_tasks"
+        )
+        let providerConfiguration = TaskProviderConfiguration(kind: .feishu, feishu: configuration)
+        let pipeline = Pipeline(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+        let task = LooperTask(
+            id: "task-1",
+            title: "Fix bug",
+            summary: "Summary",
+            status: .inReview,
+            source: "Feishu",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let failedRun = Run(
+            id: UUID(uuidString: "AAAA0000-0000-0000-0000-000000000001")!,
+            pipelineID: pipeline.id,
+            taskID: task.id,
+            status: .failed,
+            trigger: .startTask,
+            worktreePath: "/tmp/worktrees/run-1",
+            startedAt: Date(timeIntervalSince1970: 1_234_567_000),
+            finishedAt: Date(timeIntervalSince1970: 1_234_567_100),
+            exitCode: 1,
+            logPath: "/tmp/logs/run-1.log"
+        )
+        let succeededRun = Run(
+            id: UUID(uuidString: "AAAA0000-0000-0000-0000-000000000002")!,
+            pipelineID: pipeline.id,
+            taskID: task.id,
+            status: .succeeded,
+            trigger: .resumeTask,
+            worktreePath: "/tmp/worktrees/run-2",
+            startedAt: Date(timeIntervalSince1970: 1_234_567_200),
+            finishedAt: Date(timeIntervalSince1970: 1_234_567_300),
+            exitCode: 0,
+            logPath: "/tmp/logs/run-2.log"
+        )
+
+        actor WorktreeRecorder {
+            var removedPaths: [String] = []
+            func record(_ path: String) { removedPaths.append(path) }
+            func value() -> [String] { removedPaths }
+        }
+        let recorder = WorktreeRecorder()
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                runs: [failedRun, succeededRun],
+                selectedTaskID: task.id,
+                pipeline: PipelineFeature.State(
+                    pipelines: [pipeline],
+                    selectedPipelineID: pipeline.id,
+                    preferences: AppPreferences(taskProviderConfiguration: providerConfiguration)
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.taskProviderClient.updateTaskStatus = { _, _, _ in }
+            $0.gitWorktreeClient.removeWorktree = { _, worktreePath in
+                await recorder.record(worktreePath)
+            }
+        }
+
+        await store.send(.markSelectedTaskDoneButtonTapped) {
+            $0.updatingTaskIDs = [task.id]
+        }
+        await store.receive(\.taskStatusUpdateResponse.success) {
+            $0.updatingTaskIDs = []
+            $0.tasks[id: task.id]?.status = .done
+        }
+
+        let removed = await recorder.value()
+        XCTAssertEqual(Set(removed), Set(["/tmp/worktrees/run-1", "/tmp/worktrees/run-2"]))
+    }
+
     func testPipelineDraftInfersNameFromInput() {
         let namedDraft = PipelineDraft(
             name: "Payment Hardening",

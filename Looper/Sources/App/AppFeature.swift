@@ -449,7 +449,8 @@ struct AppFeature {
                         exitCode: nil,
                         state: &state,
                         finishedAt: now,
-                        saveRun: runStoreClient.saveRun
+                        saveRun: runStoreClient.saveRun,
+                        removeWorktree: gitWorktreeClient.removeWorktree
                     ),
                     writeTaskStatus(
                         taskID: task.id,
@@ -467,12 +468,20 @@ struct AppFeature {
                     return .none
                 }
 
-                return writeTaskStatus(
-                    taskID: task.id,
-                    status: .done,
-                    configuration: state.pipeline.preferences.taskProviderConfiguration,
-                    state: &state,
-                    updateStatus: taskProviderClient.updateTaskStatus
+                return .merge(
+                    writeTaskStatus(
+                        taskID: task.id,
+                        status: .done,
+                        configuration: state.pipeline.preferences.taskProviderConfiguration,
+                        state: &state,
+                        updateStatus: taskProviderClient.updateTaskStatus
+                    ),
+                    cleanupAllWorktreesEffect(
+                        taskID: task.id,
+                        runs: state.runs,
+                        pipelines: state.pipeline.pipelines,
+                        removeWorktree: gitWorktreeClient.removeWorktree
+                    )
                 )
 
             case .returnSelectedTaskToTodoButtonTapped:
@@ -613,6 +622,17 @@ struct AppFeature {
                     }
                 }
 
+                let cleanupEffect: Effect<Action> = {
+                    guard let pipeline = state.pipeline.pipelines[id: run.pipelineID] else {
+                        return .none
+                    }
+                    return worktreeCleanupEffect(
+                        run: finishedRun,
+                        projectPath: pipeline.projectPath,
+                        removeWorktree: gitWorktreeClient.removeWorktree
+                    )
+                }()
+
                 // Check if there are other active runs for this task
                 let hasOtherActiveRuns = state.runs.contains {
                     $0.taskID == taskID && $0.isActive && $0.id != run.id
@@ -623,6 +643,7 @@ struct AppFeature {
                 {
                     return .merge(
                         saveEffect,
+                        cleanupEffect,
                         writeTaskStatus(
                             taskID: taskID,
                             status: suggestedStatus,
@@ -636,7 +657,7 @@ struct AppFeature {
                 if !hasOtherActiveRuns {
                     updateTaskStatus(id: taskID, status: suggestedStatus, state: &state)
                 }
-                return saveEffect
+                return .merge(saveEffect, cleanupEffect)
 
             case .dismissTaskProviderError:
                 state.taskProviderErrorMessage = nil
@@ -743,12 +764,27 @@ extension AppFeature {
             state.runs[id: runID] = finishedRun
 
             let taskID = run.taskID
-            guard let task = state.tasks[id: taskID], task.status == .inProgress else {
-                return .run { [saveRun = runStoreClient.saveRun] send in
-                    do { try await saveRun(finishedRun) } catch {
-                        await send(.runPersistenceFailed(.init(description: error.localizedDescription)))
-                    }
+
+            let cleanupEffect: Effect<Action> = {
+                guard let pipeline = state.pipeline.pipelines[id: run.pipelineID] else {
+                    return .none
                 }
+                return worktreeCleanupEffect(
+                    run: finishedRun,
+                    projectPath: pipeline.projectPath,
+                    removeWorktree: gitWorktreeClient.removeWorktree
+                )
+            }()
+
+            guard let task = state.tasks[id: taskID], task.status == .inProgress else {
+                return .merge(
+                    .run { [saveRun = runStoreClient.saveRun] send in
+                        do { try await saveRun(finishedRun) } catch {
+                            await send(.runPersistenceFailed(.init(description: error.localizedDescription)))
+                        }
+                    },
+                    cleanupEffect
+                )
             }
 
             let hasOtherActiveRuns = state.runs.contains {
@@ -766,6 +802,7 @@ extension AppFeature {
             {
                 return .merge(
                     saveEffect,
+                    cleanupEffect,
                     writeTaskStatus(
                         taskID: taskID,
                         status: suggestedTaskStatus,
@@ -779,7 +816,7 @@ extension AppFeature {
             if !hasOtherActiveRuns {
                 updateTaskStatus(id: taskID, status: suggestedTaskStatus, state: &state)
             }
-            return saveEffect
+            return .merge(saveEffect, cleanupEffect)
         }
     }
 }
@@ -965,7 +1002,8 @@ private func finishActiveRun(
     exitCode: Int32?,
     state: inout AppFeature.State,
     finishedAt: Date,
-    saveRun: @escaping @Sendable (Run) async throws -> Void
+    saveRun: @escaping @Sendable (Run) async throws -> Void,
+    removeWorktree: @escaping @Sendable (String, String) async throws -> Void
 ) -> Effect<AppFeature.Action> {
     guard let pipeline = selectedPipeline(state: state) else { return .none }
     return finishActiveRun(
@@ -975,7 +1013,9 @@ private func finishActiveRun(
         exitCode: exitCode,
         state: &state,
         finishedAt: finishedAt,
-        saveRun: saveRun
+        saveRun: saveRun,
+        removeWorktree: removeWorktree,
+        projectPath: pipeline.projectPath
     )
 }
 
@@ -986,7 +1026,9 @@ private func finishActiveRun(
     exitCode: Int32?,
     state: inout AppFeature.State,
     finishedAt: Date,
-    saveRun: @escaping @Sendable (Run) async throws -> Void
+    saveRun: @escaping @Sendable (Run) async throws -> Void,
+    removeWorktree: @escaping @Sendable (String, String) async throws -> Void,
+    projectPath: String
 ) -> Effect<AppFeature.Action> {
     guard let runID = activeRunID(
         pipelineID: pipelineID,
@@ -1005,7 +1047,7 @@ private func finishActiveRun(
     )
     state.runs[id: runID] = finishedRun
 
-    return .run { send in
+    let saveEffect: Effect<AppFeature.Action> = .run { send in
         do {
             try await saveRun(finishedRun)
         } catch {
@@ -1016,6 +1058,14 @@ private func finishActiveRun(
             )
         }
     }
+
+    let cleanupEffect = worktreeCleanupEffect(
+        run: finishedRun,
+        projectPath: projectPath,
+        removeWorktree: removeWorktree
+    )
+
+    return .merge(saveEffect, cleanupEffect)
 }
 
 private func startRunWithWorktreeEffect(
@@ -1210,6 +1260,39 @@ private func bestFieldMatch(
     }
 
     return nil
+}
+
+private func worktreeCleanupEffect(
+    run: Run,
+    projectPath: String,
+    removeWorktree: @escaping @Sendable (String, String) async throws -> Void
+) -> Effect<AppFeature.Action> {
+    guard run.status == .succeeded, let worktreePath = run.worktreePath else {
+        return .none
+    }
+
+    return .run { _ in
+        try? await removeWorktree(projectPath, worktreePath)
+    }
+}
+
+private func cleanupAllWorktreesEffect(
+    taskID: LooperTask.ID,
+    runs: IdentifiedArrayOf<Run>,
+    pipelines: IdentifiedArrayOf<Pipeline>,
+    removeWorktree: @escaping @Sendable (String, String) async throws -> Void
+) -> Effect<AppFeature.Action> {
+    let worktreeRuns = runs.filter { $0.taskID == taskID && $0.worktreePath != nil && !$0.isActive }
+    guard !worktreeRuns.isEmpty else { return .none }
+
+    return .run { _ in
+        for run in worktreeRuns {
+            guard let worktreePath = run.worktreePath,
+                  let pipeline = pipelines[id: run.pipelineID]
+            else { continue }
+            try? await removeWorktree(pipeline.projectPath, worktreePath)
+        }
+    }
 }
 
 private func attachTerminalsForDevelopingTasks(
