@@ -135,6 +135,8 @@ struct SettingsView: View {
             switch section {
             case .general:
                 generalSection
+            case .taskProvider:
+                taskProviderSection
             case .about:
                 aboutSection
             }
@@ -149,14 +151,262 @@ struct SettingsView: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("settings.general.placeholder", bundle: lang.bundle)
-                    .font(.body.weight(.medium))
+            LabeledContent {
+                TextField(
+                    "claude",
+                    text: $store.pipeline.preferences.defaultAgentCommand
+                )
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 280)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("settings.general.agentCommand", bundle: lang.bundle)
+                    Text("settings.general.agentCommandDetail", bundle: lang.bundle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
 
-                Text("settings.general.placeholderDetail", bundle: lang.bundle)
+    // MARK: - Task Provider
+
+    private var taskProviderSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            providerPicker
+
+            Divider()
+
+            switch store.pipeline.preferences.taskProviderConfiguration.kind {
+            case .local:
+                localProviderInfo
+            case .feishu:
+                feishuConfigForm
+            }
+        }
+    }
+
+    private var providerPicker: some View {
+        LabeledContent {
+            Picker(
+                selection: Binding(
+                    get: { store.pipeline.preferences.taskProviderConfiguration.kind },
+                    set: { store.send(.selectTaskProvider($0)) }
+                )
+            ) {
+                ForEach(TaskProviderKind.allCases, id: \.self) { kind in
+                    Text(kind.label).tag(kind)
+                }
+            } label: {
+                EmptyView()
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 240)
+        } label: {
+            Text("settings.taskProvider.source", bundle: lang.bundle)
+        }
+    }
+
+    private var localProviderInfo: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label {
+                Text("settings.taskProvider.local.description", bundle: lang.bundle)
                     .font(.body)
                     .foregroundStyle(.secondary)
+            } icon: {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
             }
+        }
+    }
+
+    // MARK: - Feishu Config
+
+    private var feishuConfigForm: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            feishuConnectionFields
+            Divider()
+            feishuFieldMappingSection
+            Divider()
+            feishuStatusMappingSection
+            Divider()
+            feishuActions
+        }
+    }
+
+    private var feishuConnectionFields: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("settings.feishu.connection", bundle: lang.bundle)
+                .font(.headline)
+
+            settingsTextField(
+                label: "App ID",
+                text: $store.pipeline.preferences.feishuProviderConfiguration.appID,
+                placeholder: "cli_xxxx"
+            )
+            settingsSecureField(
+                label: "App Secret",
+                text: $store.pipeline.preferences.feishuProviderConfiguration.appSecret,
+                placeholder: "••••••••"
+            )
+            settingsTextField(
+                label: "App Token",
+                text: $store.pipeline.preferences.feishuProviderConfiguration.appToken,
+                placeholder: "appXXXX"
+            )
+            settingsTextField(
+                label: "Table ID",
+                text: $store.pipeline.preferences.feishuProviderConfiguration.tableID,
+                placeholder: "tblXXXX"
+            )
+        }
+    }
+
+    private var feishuFieldMappingSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("settings.feishu.fieldMapping", bundle: lang.bundle)
+                .font(.headline)
+
+            Text("settings.feishu.fieldMapping.detail", bundle: lang.bundle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            settingsTextField(
+                label: "settings.feishu.field.title",
+                text: $store.pipeline.preferences.feishuProviderConfiguration.titleFieldName,
+                placeholder: "Title"
+            )
+            settingsTextField(
+                label: "settings.feishu.field.summary",
+                text: $store.pipeline.preferences.feishuProviderConfiguration.summaryFieldName,
+                placeholder: "Summary"
+            )
+            settingsTextField(
+                label: "settings.feishu.field.status",
+                text: $store.pipeline.preferences.feishuProviderConfiguration.statusFieldName,
+                placeholder: "Status"
+            )
+            settingsTextField(
+                label: "settings.feishu.field.repoPath",
+                text: $store.pipeline.preferences.feishuProviderConfiguration.repoPathFieldName,
+                placeholder: "Repository"
+            )
+        }
+    }
+
+    private var feishuStatusMappingSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("settings.feishu.statusMapping", bundle: lang.bundle)
+                .font(.headline)
+
+            Text("settings.feishu.statusMapping.detail", bundle: lang.bundle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    settingsTextField(
+                        label: "Todo",
+                        text: $store.pipeline.preferences.feishuProviderConfiguration.todoStatusValue,
+                        placeholder: "todo"
+                    )
+                    settingsTextField(
+                        label: "In Progress",
+                        text: $store.pipeline.preferences.feishuProviderConfiguration.inProgressStatusValue,
+                        placeholder: "in_progress"
+                    )
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    settingsTextField(
+                        label: "In Review",
+                        text: $store.pipeline.preferences.feishuProviderConfiguration.inReviewStatusValue,
+                        placeholder: "in_review"
+                    )
+                    settingsTextField(
+                        label: "Done",
+                        text: $store.pipeline.preferences.feishuProviderConfiguration.doneStatusValue,
+                        placeholder: "done"
+                    )
+                }
+            }
+        }
+    }
+
+    private var feishuActions: some View {
+        HStack(spacing: 12) {
+            Button {
+                store.send(.inspectTaskProviderButtonTapped)
+            } label: {
+                if store.isInspectingTaskProvider {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label("settings.feishu.inspect", systemImage: "magnifyingglass")
+                }
+            }
+            .disabled(store.isInspectingTaskProvider)
+
+            Button {
+                store.send(.saveSettingsButtonTapped)
+            } label: {
+                if store.isSavingSettings {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label("settings.feishu.save", systemImage: "checkmark.circle")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(store.isSavingSettings)
+
+            Spacer()
+
+            if let inspection = store.taskProviderInspection {
+                inspectionBadge(inspection)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func inspectionBadge(_ inspection: TaskProviderInspection) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            Text("settings.feishu.inspectResult \(inspection.previewTaskCount) \(inspection.discoveredFieldNames.count)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Field Helpers
+
+    private func settingsTextField(
+        label: LocalizedStringKey,
+        text: Binding<String>,
+        placeholder: String
+    ) -> some View {
+        LabeledContent {
+            TextField(placeholder, text: text)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 220)
+        } label: {
+            Text(label, bundle: lang.bundle)
+                .frame(width: 100, alignment: .trailing)
+        }
+    }
+
+    private func settingsSecureField(
+        label: String,
+        text: Binding<String>,
+        placeholder: String
+    ) -> some View {
+        LabeledContent {
+            SecureField(placeholder, text: text)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 220)
+        } label: {
+            Text(label)
+                .frame(width: 100, alignment: .trailing)
         }
     }
 
@@ -222,6 +472,7 @@ struct SettingsView: View {
 
 private enum SettingsSection: String, CaseIterable, Hashable, Identifiable {
     case general
+    case taskProvider
     case about
 
     var id: String { rawValue }
@@ -229,6 +480,7 @@ private enum SettingsSection: String, CaseIterable, Hashable, Identifiable {
     var titleKey: LocalizedStringKey {
         switch self {
         case .general: "settings.general"
+        case .taskProvider: "settings.taskProvider"
         case .about: "settings.about"
         }
     }
@@ -236,6 +488,7 @@ private enum SettingsSection: String, CaseIterable, Hashable, Identifiable {
     var subtitleKey: LocalizedStringKey {
         switch self {
         case .general: "settings.general.subtitle"
+        case .taskProvider: "settings.taskProvider.subtitle"
         case .about: "settings.about.subtitle"
         }
     }
@@ -243,6 +496,7 @@ private enum SettingsSection: String, CaseIterable, Hashable, Identifiable {
     var symbolName: String {
         switch self {
         case .general: "slider.horizontal.3"
+        case .taskProvider: "tray.and.arrow.down"
         case .about: "info.circle"
         }
     }

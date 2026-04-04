@@ -2,6 +2,23 @@
   "sourceLanguage": "en",
   "strings": {
     "/Users/you/project": {},
+    "Bundle ID": {},
+    "Looper": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Looper"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Looper"
+          }
+        }
+      }
+    },
     "alert.error": {
       "extractionState": "manual",
       "localizations": {
@@ -32,125 +49,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "好"
-          }
-        }
-      }
-    },
-    "context.deleteConfirm.cancel": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cancel"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "取消"
-          }
-        }
-      }
-    },
-    "context.deleteConfirm.delete": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Delete"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "删除"
-          }
-        }
-      }
-    },
-    "context.deleteConfirm.message": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This will remove the pipeline and its terminal session. Tasks from the provider are not affected."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "这将移除该流水线及其终端会话。来自提供方的任务不受影响。"
-          }
-        }
-      }
-    },
-    "context.deleteConfirm.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Delete Pipeline?"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "删除流水线？"
-          }
-        }
-      }
-    },
-    "context.deletePipeline": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Delete Pipeline"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "删除流水线"
-          }
-        }
-      }
-    },
-    "context.rebuildTerminal": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Rebuild Terminal"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重建终端"
-          }
-        }
-      }
-    },
-    "context.revealInFinder": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reveal in Finder"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在访达中显示"
           }
         }
       }
@@ -376,7 +274,6 @@
         }
       }
     },
-    "Bundle ID": {},
     "composer.cancel": {
       "extractionState": "manual",
       "localizations": {
@@ -547,6 +444,125 @@
         }
       }
     },
+    "context.deleteConfirm.cancel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消"
+          }
+        }
+      }
+    },
+    "context.deleteConfirm.delete": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除"
+          }
+        }
+      }
+    },
+    "context.deleteConfirm.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This will remove the pipeline and its terminal session. Tasks from the provider are not affected."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这将移除该流水线及其终端会话。来自提供方的任务不受影响。"
+          }
+        }
+      }
+    },
+    "context.deleteConfirm.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete Pipeline?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除流水线？"
+          }
+        }
+      }
+    },
+    "context.deletePipeline": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete Pipeline"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除流水线"
+          }
+        }
+      }
+    },
+    "context.rebuildTerminal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rebuild Terminal"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重建终端"
+          }
+        }
+      }
+    },
+    "context.revealInFinder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reveal in Finder"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在访达中显示"
+          }
+        }
+      }
+    },
     "error.configureFeishu": {
       "extractionState": "manual",
       "localizations": {
@@ -632,23 +648,6 @@
         }
       }
     },
-    "error.maxConcurrentRuns": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This pipeline has reached its maximum number of concurrent runs."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此流水线已达到最大并行运行数。"
-          }
-        }
-      }
-    },
     "error.localProviderNotReady": {
       "extractionState": "manual",
       "localizations": {
@@ -683,18 +682,19 @@
         }
       }
     },
-    "Looper": {
+    "error.maxConcurrentRuns": {
+      "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Looper"
+            "value": "This pipeline has reached its maximum number of concurrent runs."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Looper"
+            "value": "此流水线已达到最大并行运行数。"
           }
         }
       }
@@ -852,6 +852,210 @@
         }
       }
     },
+    "settings.feishu.connection": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接配置"
+          }
+        }
+      }
+    },
+    "settings.feishu.field.repoPath": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Repo Path"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仓库路径"
+          }
+        }
+      }
+    },
+    "settings.feishu.field.status": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Status"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "状态"
+          }
+        }
+      }
+    },
+    "settings.feishu.field.summary": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Summary"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "描述"
+          }
+        }
+      }
+    },
+    "settings.feishu.field.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Title"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "标题"
+          }
+        }
+      }
+    },
+    "settings.feishu.fieldMapping": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Field Mapping"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "字段映射"
+          }
+        }
+      }
+    },
+    "settings.feishu.fieldMapping.detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Map Bitable column names to Looper task fields."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将多维表格列名映射到 Looper 任务字段。"
+          }
+        }
+      }
+    },
+    "settings.feishu.inspect": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inspect Table"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检测表格"
+          }
+        }
+      }
+    },
+    "settings.feishu.inspectResult %lld %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld tasks, %lld fields found"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发现 %lld 条任务，%lld 个字段"
+          }
+        }
+      }
+    },
+    "settings.feishu.save": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存"
+          }
+        }
+      }
+    },
+    "settings.feishu.statusMapping": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Status Mapping"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "状态值映射"
+          }
+        }
+      }
+    },
+    "settings.feishu.statusMapping.detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Map Bitable status values to Looper task states."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将多维表格状态值映射到 Looper 任务状态。"
+          }
+        }
+      }
+    },
     "settings.general": {
       "extractionState": "manual",
       "localizations": {
@@ -865,6 +1069,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "通用"
+          }
+        }
+      }
+    },
+    "settings.general.agentCommand": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent Command"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代理命令"
+          }
+        }
+      }
+    },
+    "settings.general.agentCommandDetail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The CLI command used to launch the coding agent."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用于启动编码代理的 CLI 命令。"
           }
         }
       }
@@ -1005,6 +1243,74 @@
         }
       }
     },
+    "settings.taskProvider": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Task Provider"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任务来源"
+          }
+        }
+      }
+    },
+    "settings.taskProvider.local.description": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tasks are managed locally inside Looper. No external connection needed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任务在 Looper 内本地管理，无需外部连接。"
+          }
+        }
+      }
+    },
+    "settings.taskProvider.source": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Provider"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来源"
+          }
+        }
+      }
+    },
+    "settings.taskProvider.subtitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configure where tasks come from"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配置任务数据来源"
+          }
+        }
+      }
+    },
     "settings.version": {
       "extractionState": "manual",
       "localizations": {
@@ -1018,6 +1324,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "版本"
+          }
+        }
+      }
+    },
+    "sidebar.allPipelines": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All Pipelines"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部流水线"
           }
         }
       }
@@ -1209,40 +1532,6 @@
         }
       }
     },
-    "task.markReview": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mark for Review"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "提交审核"
-          }
-        }
-      }
-    },
-    "task.returnToTodo": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Return to Todo"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "退回待办"
-          }
-        }
-      }
-    },
     "task.inspect": {
       "extractionState": "manual",
       "localizations": {
@@ -1260,6 +1549,23 @@
         }
       }
     },
+    "task.markReview": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mark for Review"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提交审核"
+          }
+        }
+      }
+    },
     "task.noProject": {
       "extractionState": "manual",
       "localizations": {
@@ -1273,6 +1579,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "无项目"
+          }
+        }
+      }
+    },
+    "task.returnToTodo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Return to Todo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退回待办"
           }
         }
       }
@@ -1307,6 +1630,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "开始"
+          }
+        }
+      }
+    },
+    "task.terminalActive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Viewing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看中"
+          }
+        }
+      }
+    },
+    "task.terminalShow": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminal"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "终端"
           }
         }
       }
@@ -1511,57 +1868,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "工作区"
-          }
-        }
-      }
-    },
-    "sidebar.allPipelines": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "All Pipelines"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "全部流水线"
-          }
-        }
-      }
-    },
-    "task.terminalActive": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Viewing"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "查看中"
-          }
-        }
-      }
-    },
-    "task.terminalShow": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Terminal"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "终端"
           }
         }
       }
