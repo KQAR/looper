@@ -1107,6 +1107,40 @@
         }
       }
     },
+    "settings.general.postRunGitAction": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After Task Completes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任务完成后"
+          }
+        }
+      }
+    },
+    "settings.general.postRunGitActionDetail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Git action to perform when an agent run succeeds."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代理运行成功后执行的 Git 操作。"
+          }
+        }
+      }
+    },
     "settings.general.placeholder": {
       "extractionState": "manual",
       "localizations": {

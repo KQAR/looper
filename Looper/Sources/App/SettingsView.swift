@@ -166,6 +166,28 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            Divider()
+
+            LabeledContent {
+                Picker(
+                    selection: $store.pipeline.preferences.postRunGitAction
+                ) {
+                    ForEach(PostRunGitAction.allCases) { action in
+                        Text(action.label).tag(action)
+                    }
+                } label: {
+                    EmptyView()
+                }
+                .frame(width: 280)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("settings.general.postRunGitAction", bundle: lang.bundle)
+                    Text("settings.general.postRunGitActionDetail", bundle: lang.bundle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 

@@ -6,6 +6,8 @@ struct GitWorktreeClient {
     var createWorktree: @Sendable (_ projectPath: String, _ branchName: String) async throws -> String
     var removeWorktree: @Sendable (_ projectPath: String, _ worktreePath: String) async throws -> Void
     var writeTaskContext: @Sendable (_ worktreePath: String, _ task: LooperTask) async throws -> Void
+    var pushBranch: @Sendable (_ worktreePath: String) async throws -> Void
+    var createPullRequest: @Sendable (_ worktreePath: String, _ title: String, _ body: String) async throws -> String
 }
 
 extension DependencyValues {
@@ -34,13 +36,25 @@ extension GitWorktreeClient: DependencyKey {
                 worktreePath: worktreePath,
                 task: task
             )
+        },
+        pushBranch: { worktreePath in
+            try GitWorktreeIO.pushBranch(worktreePath: worktreePath)
+        },
+        createPullRequest: { worktreePath, title, body in
+            try GitWorktreeIO.createPullRequest(
+                worktreePath: worktreePath,
+                title: title,
+                body: body
+            )
         }
     )
 
     static let testValue = GitWorktreeClient(
         createWorktree: { _, _ in "/tmp/test-worktree" },
         removeWorktree: { _, _ in },
-        writeTaskContext: { _, _ in }
+        writeTaskContext: { _, _ in },
+        pushBranch: { _ in },
+        createPullRequest: { _, _, _ in "" }
     )
 }
 
@@ -105,6 +119,58 @@ private enum GitWorktreeIO {
 
         let taskMDPath = (worktreePath as NSString).appendingPathComponent("TASK.md")
         try content.write(toFile: taskMDPath, atomically: true, encoding: .utf8)
+    }
+
+    static func pushBranch(worktreePath: String) throws {
+        try runGit(in: worktreePath, args: ["push", "-u", "origin", "HEAD"])
+    }
+
+    static func createPullRequest(
+        worktreePath: String,
+        title: String,
+        body: String
+    ) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["gh", "pr", "create", "--title", title, "--body", body]
+        process.currentDirectoryURL = URL(fileURLWithPath: worktreePath)
+
+        // Ensure PATH includes common locations for gh
+        var env = ProcessInfo.processInfo.environment
+        let extraPaths = ["/usr/local/bin", "/opt/homebrew/bin"]
+        let currentPath = env["PATH"] ?? "/usr/bin:/bin"
+        let missing = extraPaths.filter { !currentPath.contains($0) }
+        if !missing.isEmpty {
+            env["PATH"] = (missing + [currentPath]).joined(separator: ":")
+        }
+        process.environment = env
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+        process.waitUntilExit()
+
+        let output = String(
+            decoding: stdout.fileHandleForReading.readDataToEndOfFile(),
+            as: UTF8.self
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard process.terminationStatus == 0 else {
+            let errorOutput = String(
+                decoding: stderr.fileHandleForReading.readDataToEndOfFile(),
+                as: UTF8.self
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            throw GitWorktreeError(
+                description: errorOutput.isEmpty
+                    ? "gh pr create failed with exit code \(process.terminationStatus)"
+                    : errorOutput
+            )
+        }
+
+        return output // PR URL
     }
 
     private static func worktreeBasePath(for projectPath: String) -> String {

@@ -1506,6 +1506,233 @@ final class AppFeatureTests: XCTestCase {
         XCTAssertEqual(Set(removed), Set(["/tmp/worktrees/run-1", "/tmp/worktrees/run-2"]))
     }
 
+    func testAgentSuccessPushesAndCreatesPR() async {
+        let configuration = FeishuTaskProviderConfiguration(
+            appID: "cli_xxx",
+            appSecret: "secret",
+            appToken: "app_token",
+            tableID: "tbl_tasks"
+        )
+        let providerConfiguration = TaskProviderConfiguration(kind: .feishu, feishu: configuration)
+        let pipeline = Pipeline(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+        let task = LooperTask(
+            id: "task-1",
+            title: "Fix login bug",
+            summary: "Users can't log in after password reset",
+            status: .inProgress,
+            source: "Feishu",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let runID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
+        let run = Run(
+            id: runID,
+            pipelineID: pipeline.id,
+            taskID: task.id,
+            status: .running,
+            trigger: .startTask,
+            worktreePath: "/tmp/looper-worktrees/demo/looper/task-1-9E24E1C8",
+            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "/tmp/looper-runs/\(runID.uuidString).log"
+        )
+        let finishedAt = Date(timeIntervalSince1970: 1_234_567_999)
+
+        actor GitActionRecorder {
+            var pushedPaths: [String] = []
+            var prCalls: [(path: String, title: String, body: String)] = []
+            var removedPaths: [String] = []
+            func recordPush(_ path: String) { pushedPaths.append(path) }
+            func recordPR(_ path: String, _ title: String, _ body: String) { prCalls.append((path, title, body)) }
+            func recordRemove(_ path: String) { removedPaths.append(path) }
+        }
+        let recorder = GitActionRecorder()
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                runs: [run],
+                selectedTaskID: task.id,
+                pipeline: PipelineFeature.State(
+                    pipelines: [pipeline],
+                    selectedPipelineID: pipeline.id,
+                    preferences: AppPreferences(
+                        postRunGitAction: .pushAndPR,
+                        taskProviderConfiguration: providerConfiguration
+                    )
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.runStoreClient.saveRun = { _ in }
+            $0.taskProviderClient.updateTaskStatus = { _, _, _ in }
+            $0.gitWorktreeClient.pushBranch = { path in
+                await recorder.recordPush(path)
+            }
+            $0.gitWorktreeClient.createPullRequest = { path, title, body in
+                await recorder.recordPR(path, title, body)
+                return "https://github.com/test/repo/pull/1"
+            }
+            $0.gitWorktreeClient.removeWorktree = { _, path in
+                await recorder.recordRemove(path)
+            }
+            $0.date.now = finishedAt
+        }
+
+        let agentResult = AgentResult(
+            sessionID: "sess-1",
+            isError: false,
+            durationMs: 12345,
+            costUSD: 0.05,
+            numTurns: 3,
+            resultText: "Done"
+        )
+
+        await store.send(.agentEventReceived(runID: runID, .result(agentResult))) {
+            var finished = run
+            finished.sessionID = "sess-1"
+            finished.costUSD = 0.05
+            finished.currentActivity = nil
+            finished.status = .succeeded
+            finished.exitCode = 0
+            finished.finishedAt = finishedAt
+            $0.runs[id: runID] = finished
+            $0.updatingTaskIDs = [task.id]
+        }
+        await store.receive(\.taskStatusUpdateResponse.success) {
+            $0.updatingTaskIDs = []
+            $0.tasks[id: task.id]?.status = .inReview
+        }
+
+        let worktreePath = "/tmp/looper-worktrees/demo/looper/task-1-9E24E1C8"
+        let pushed = await recorder.pushedPaths
+        XCTAssertEqual(pushed, [worktreePath], "Branch should be pushed to remote")
+
+        let prCalls = await recorder.prCalls
+        XCTAssertEqual(prCalls.count, 1, "PR should be created")
+        XCTAssertEqual(prCalls.first?.title, "Fix login bug")
+        XCTAssertEqual(prCalls.first?.body, "Users can't log in after password reset")
+
+        let removed = await recorder.removedPaths
+        XCTAssertEqual(removed, [worktreePath], "Worktree should be cleaned up after push")
+    }
+
+    func testAgentSuccessWithNoneActionSkipsPush() async {
+        let configuration = FeishuTaskProviderConfiguration(
+            appID: "cli_xxx",
+            appSecret: "secret",
+            appToken: "app_token",
+            tableID: "tbl_tasks"
+        )
+        let providerConfiguration = TaskProviderConfiguration(kind: .feishu, feishu: configuration)
+        let pipeline = Pipeline(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+        let task = LooperTask(
+            id: "task-1",
+            title: "Fix bug",
+            summary: "Summary",
+            status: .inProgress,
+            source: "Feishu",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let runID = UUID(uuidString: "9E24E1C8-76FC-4A4C-B8D8-0B5D16F8D61D")!
+        let run = Run(
+            id: runID,
+            pipelineID: pipeline.id,
+            taskID: task.id,
+            status: .running,
+            trigger: .startTask,
+            worktreePath: "/tmp/looper-worktrees/demo/looper/task-1-9E24E1C8",
+            startedAt: Date(timeIntervalSince1970: 1_234_567_890),
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "/tmp/looper-runs/\(runID.uuidString).log"
+        )
+        let finishedAt = Date(timeIntervalSince1970: 1_234_567_999)
+
+        actor GitActionRecorder {
+            var pushedPaths: [String] = []
+            var removedPaths: [String] = []
+            func recordPush(_ path: String) { pushedPaths.append(path) }
+            func recordRemove(_ path: String) { removedPaths.append(path) }
+        }
+        let recorder = GitActionRecorder()
+
+        let store = TestStore(
+            initialState: AppFeature.State(
+                tasks: [task],
+                runs: [run],
+                selectedTaskID: task.id,
+                pipeline: PipelineFeature.State(
+                    pipelines: [pipeline],
+                    selectedPipelineID: pipeline.id,
+                    preferences: AppPreferences(
+                        postRunGitAction: .none,
+                        taskProviderConfiguration: providerConfiguration
+                    )
+                )
+            )
+        ) {
+            AppFeature()
+        } withDependencies: {
+            $0.runStoreClient.saveRun = { _ in }
+            $0.taskProviderClient.updateTaskStatus = { _, _, _ in }
+            $0.gitWorktreeClient.pushBranch = { path in
+                await recorder.recordPush(path)
+            }
+            $0.gitWorktreeClient.removeWorktree = { _, path in
+                await recorder.recordRemove(path)
+            }
+            $0.date.now = finishedAt
+        }
+
+        let agentResult = AgentResult(
+            sessionID: "sess-1",
+            isError: false,
+            durationMs: 12345,
+            costUSD: 0.05,
+            numTurns: 3,
+            resultText: "Done"
+        )
+
+        await store.send(.agentEventReceived(runID: runID, .result(agentResult))) {
+            var finished = run
+            finished.sessionID = "sess-1"
+            finished.costUSD = 0.05
+            finished.currentActivity = nil
+            finished.status = .succeeded
+            finished.exitCode = 0
+            finished.finishedAt = finishedAt
+            $0.runs[id: runID] = finished
+            $0.updatingTaskIDs = [task.id]
+        }
+        await store.receive(\.taskStatusUpdateResponse.success) {
+            $0.updatingTaskIDs = []
+            $0.tasks[id: task.id]?.status = .inReview
+        }
+
+        let pushed = await recorder.pushedPaths
+        XCTAssertTrue(pushed.isEmpty, "Should not push when action is .none")
+
+        let removed = await recorder.removedPaths
+        XCTAssertEqual(removed, ["/tmp/looper-worktrees/demo/looper/task-1-9E24E1C8"],
+                       "Worktree should still be cleaned up even with .none action")
+    }
+
     func testPipelineDraftInfersNameFromInput() {
         let namedDraft = PipelineDraft(
             name: "Payment Hardening",

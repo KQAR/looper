@@ -450,6 +450,8 @@ struct AppFeature {
                         state: &state,
                         finishedAt: now,
                         saveRun: runStoreClient.saveRun,
+                        pushBranch: gitWorktreeClient.pushBranch,
+                        createPullRequest: gitWorktreeClient.createPullRequest,
                         removeWorktree: gitWorktreeClient.removeWorktree
                     ),
                     writeTaskStatus(
@@ -626,9 +628,13 @@ struct AppFeature {
                     guard let pipeline = state.pipeline.pipelines[id: run.pipelineID] else {
                         return .none
                     }
-                    return worktreeCleanupEffect(
+                    return postRunGitEffect(
                         run: finishedRun,
+                        task: task,
                         projectPath: pipeline.projectPath,
+                        postRunAction: state.pipeline.preferences.postRunGitAction,
+                        pushBranch: gitWorktreeClient.pushBranch,
+                        createPullRequest: gitWorktreeClient.createPullRequest,
                         removeWorktree: gitWorktreeClient.removeWorktree
                     )
                 }()
@@ -765,27 +771,42 @@ extension AppFeature {
 
             let taskID = run.taskID
 
-            let cleanupEffect: Effect<Action> = {
-                guard let pipeline = state.pipeline.pipelines[id: run.pipelineID] else {
-                    return .none
-                }
-                return worktreeCleanupEffect(
-                    run: finishedRun,
-                    projectPath: pipeline.projectPath,
-                    removeWorktree: gitWorktreeClient.removeWorktree
-                )
-            }()
-
             guard let task = state.tasks[id: taskID], task.status == .inProgress else {
+                // No task context — just save and do basic worktree removal
+                let basicCleanup: Effect<Action> = {
+                    guard finishedRun.status == .succeeded,
+                          let worktreePath = finishedRun.worktreePath,
+                          let pipeline = state.pipeline.pipelines[id: run.pipelineID]
+                    else { return .none }
+                    return .run { [removeWorktree = gitWorktreeClient.removeWorktree] _ in
+                        try? await removeWorktree(pipeline.projectPath, worktreePath)
+                    }
+                }()
+
                 return .merge(
                     .run { [saveRun = runStoreClient.saveRun] send in
                         do { try await saveRun(finishedRun) } catch {
                             await send(.runPersistenceFailed(.init(description: error.localizedDescription)))
                         }
                     },
-                    cleanupEffect
+                    basicCleanup
                 )
             }
+
+            let cleanupEffect: Effect<Action> = {
+                guard let pipeline = state.pipeline.pipelines[id: run.pipelineID] else {
+                    return .none
+                }
+                return postRunGitEffect(
+                    run: finishedRun,
+                    task: task,
+                    projectPath: pipeline.projectPath,
+                    postRunAction: state.pipeline.preferences.postRunGitAction,
+                    pushBranch: gitWorktreeClient.pushBranch,
+                    createPullRequest: gitWorktreeClient.createPullRequest,
+                    removeWorktree: gitWorktreeClient.removeWorktree
+                )
+            }()
 
             let hasOtherActiveRuns = state.runs.contains {
                 $0.taskID == taskID && $0.isActive && $0.id != runID
@@ -1003,36 +1024,42 @@ private func finishActiveRun(
     state: inout AppFeature.State,
     finishedAt: Date,
     saveRun: @escaping @Sendable (Run) async throws -> Void,
+    pushBranch: @escaping @Sendable (String) async throws -> Void,
+    createPullRequest: @escaping @Sendable (String, String, String) async throws -> String,
     removeWorktree: @escaping @Sendable (String, String) async throws -> Void
 ) -> Effect<AppFeature.Action> {
     guard let pipeline = selectedPipeline(state: state) else { return .none }
     return finishActiveRun(
+        task: task,
         pipelineID: pipeline.id,
-        taskID: task.id,
         status: status,
         exitCode: exitCode,
         state: &state,
         finishedAt: finishedAt,
         saveRun: saveRun,
+        pushBranch: pushBranch,
+        createPullRequest: createPullRequest,
         removeWorktree: removeWorktree,
         projectPath: pipeline.projectPath
     )
 }
 
 private func finishActiveRun(
+    task: LooperTask,
     pipelineID: UUID,
-    taskID: LooperTask.ID,
     status: Run.Status,
     exitCode: Int32?,
     state: inout AppFeature.State,
     finishedAt: Date,
     saveRun: @escaping @Sendable (Run) async throws -> Void,
+    pushBranch: @escaping @Sendable (String) async throws -> Void,
+    createPullRequest: @escaping @Sendable (String, String, String) async throws -> String,
     removeWorktree: @escaping @Sendable (String, String) async throws -> Void,
     projectPath: String
 ) -> Effect<AppFeature.Action> {
     guard let runID = activeRunID(
         pipelineID: pipelineID,
-        taskID: taskID,
+        taskID: task.id,
         in: state.runs
     ),
     let run = state.runs[id: runID]
@@ -1059,9 +1086,13 @@ private func finishActiveRun(
         }
     }
 
-    let cleanupEffect = worktreeCleanupEffect(
+    let cleanupEffect = postRunGitEffect(
         run: finishedRun,
+        task: task,
         projectPath: projectPath,
+        postRunAction: state.pipeline.preferences.postRunGitAction,
+        pushBranch: pushBranch,
+        createPullRequest: createPullRequest,
         removeWorktree: removeWorktree
     )
 
@@ -1262,9 +1293,13 @@ private func bestFieldMatch(
     return nil
 }
 
-private func worktreeCleanupEffect(
+private func postRunGitEffect(
     run: Run,
+    task: LooperTask,
     projectPath: String,
+    postRunAction: PostRunGitAction,
+    pushBranch: @escaping @Sendable (String) async throws -> Void,
+    createPullRequest: @escaping @Sendable (String, String, String) async throws -> String,
     removeWorktree: @escaping @Sendable (String, String) async throws -> Void
 ) -> Effect<AppFeature.Action> {
     guard run.status == .succeeded, let worktreePath = run.worktreePath else {
@@ -1272,6 +1307,21 @@ private func worktreeCleanupEffect(
     }
 
     return .run { _ in
+        // 1. Push branch to remote (both pushBranch and pushAndPR need this)
+        if postRunAction == .pushBranch || postRunAction == .pushAndPR {
+            try? await pushBranch(worktreePath)
+        }
+
+        // 2. Create PR if configured
+        if postRunAction == .pushAndPR {
+            _ = try? await createPullRequest(
+                worktreePath,
+                task.title,
+                task.summary.isEmpty ? task.title : task.summary
+            )
+        }
+
+        // 3. Remove worktree (code is safe on remote now)
         try? await removeWorktree(projectPath, worktreePath)
     }
 }

@@ -1,8 +1,25 @@
 import Foundation
 
+enum PostRunGitAction: String, Codable, Equatable, Sendable, CaseIterable, Identifiable {
+    case none
+    case pushBranch
+    case pushAndPR
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .none: "None"
+        case .pushBranch: "Push Branch"
+        case .pushAndPR: "Push + Create PR"
+        }
+    }
+}
+
 struct AppPreferences: Equatable, Sendable {
     var defaultProjectPath: String = ""
     var defaultAgentCommand: String = "claude"
+    var postRunGitAction: PostRunGitAction = .pushBranch
     var lastSelectedPipelineID: UUID?
     var taskProviderConfiguration: TaskProviderConfiguration = .init()
     var hasCompletedOnboarding = false
@@ -28,6 +45,7 @@ struct AppPreferences: Equatable, Sendable {
         Self(
             defaultProjectPath: pipeline.projectPath,
             defaultAgentCommand: pipeline.agentCommand,
+            postRunGitAction: base?.postRunGitAction ?? .pushBranch,
             lastSelectedPipelineID: selectedPipelineID,
             taskProviderConfiguration: base?.taskProviderConfiguration ?? .init(),
             hasCompletedOnboarding: base?.hasCompletedOnboarding ?? false
