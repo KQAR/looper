@@ -13,6 +13,15 @@ enum TaskProviderKind: String, CaseIterable, Codable, Equatable, Sendable {
         }
     }
 
+    func localizedLabel(bundle: Bundle) -> String {
+        switch self {
+        case .local:
+            String(localized: "settings.taskProvider.kind.local", bundle: bundle)
+        case .feishu:
+            String(localized: "settings.taskProvider.kind.feishu", bundle: bundle)
+        }
+    }
+
     var subtitle: String {
         switch self {
         case .local:

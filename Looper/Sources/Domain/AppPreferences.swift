@@ -7,11 +7,14 @@ enum PostRunGitAction: String, Codable, Equatable, Sendable, CaseIterable, Ident
 
     var id: String { rawValue }
 
-    var label: String {
+    func localizedLabel(bundle: Bundle) -> String {
         switch self {
-        case .none: "None"
-        case .pushBranch: "Push Branch"
-        case .pushAndPR: "Push + Create PR"
+        case .none:
+            String(localized: "settings.general.postRunGitAction.none", bundle: bundle)
+        case .pushBranch:
+            String(localized: "settings.general.postRunGitAction.pushBranch", bundle: bundle)
+        case .pushAndPR:
+            String(localized: "settings.general.postRunGitAction.pushAndPR", bundle: bundle)
         }
     }
 }

@@ -2,23 +2,6 @@
   "sourceLanguage": "en",
   "strings": {
     "/Users/you/project": {},
-    "Bundle ID": {},
-    "Looper": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Looper"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Looper"
-          }
-        }
-      }
-    },
     "alert.error": {
       "extractionState": "manual",
       "localizations": {
@@ -869,6 +852,74 @@
         }
       }
     },
+    "settings.feishu.appID": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App ID"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App ID"
+          }
+        }
+      }
+    },
+    "settings.feishu.appSecret": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App Secret"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App Secret"
+          }
+        }
+      }
+    },
+    "settings.feishu.appToken": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App Token"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App Token"
+          }
+        }
+      }
+    },
+    "settings.feishu.tableID": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Table ID"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "数据表 ID"
+          }
+        }
+      }
+    },
     "settings.feishu.field.repoPath": {
       "extractionState": "manual",
       "localizations": {
@@ -1141,6 +1192,57 @@
         }
       }
     },
+    "settings.general.postRunGitAction.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "None"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无操作"
+          }
+        }
+      }
+    },
+    "settings.general.postRunGitAction.pushBranch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Push Branch"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "推送分支"
+          }
+        }
+      }
+    },
+    "settings.general.postRunGitAction.pushAndPR": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Push + Create PR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "推送并创建 PR"
+          }
+        }
+      }
+    },
     "settings.general.placeholder": {
       "extractionState": "manual",
       "localizations": {
@@ -1324,6 +1426,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "来源"
+          }
+        }
+      }
+    },
+    "settings.taskProvider.kind.local": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local Tasks"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本地任务"
+          }
+        }
+      }
+    },
+    "settings.taskProvider.kind.feishu": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Feishu"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "飞书"
           }
         }
       }

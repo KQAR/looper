@@ -153,8 +153,9 @@ struct SettingsView: View {
 
             LabeledContent {
                 TextField(
-                    "claude",
-                    text: $store.pipeline.preferences.defaultAgentCommand
+                    "",
+                    text: $store.pipeline.preferences.defaultAgentCommand,
+                    prompt: Text(verbatim: "claude")
                 )
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 280)
@@ -174,7 +175,7 @@ struct SettingsView: View {
                     selection: $store.pipeline.preferences.postRunGitAction
                 ) {
                     ForEach(PostRunGitAction.allCases) { action in
-                        Text(action.label).tag(action)
+                        Text(action.localizedLabel(bundle: lang.bundle)).tag(action)
                     }
                 } label: {
                     EmptyView()
@@ -217,7 +218,7 @@ struct SettingsView: View {
                 )
             ) {
                 ForEach(TaskProviderKind.allCases, id: \.self) { kind in
-                    Text(kind.label).tag(kind)
+                    Text(kind.localizedLabel(bundle: lang.bundle)).tag(kind)
                 }
             } label: {
                 EmptyView()
@@ -262,22 +263,22 @@ struct SettingsView: View {
                 .font(.headline)
 
             settingsTextField(
-                label: "App ID",
+                label: "settings.feishu.appID",
                 text: $store.pipeline.preferences.feishuProviderConfiguration.appID,
                 placeholder: "cli_xxxx"
             )
             settingsSecureField(
-                label: "App Secret",
+                label: "settings.feishu.appSecret",
                 text: $store.pipeline.preferences.feishuProviderConfiguration.appSecret,
                 placeholder: "••••••••"
             )
             settingsTextField(
-                label: "App Token",
+                label: "settings.feishu.appToken",
                 text: $store.pipeline.preferences.feishuProviderConfiguration.appToken,
                 placeholder: "appXXXX"
             )
             settingsTextField(
-                label: "Table ID",
+                label: "settings.feishu.tableID",
                 text: $store.pipeline.preferences.feishuProviderConfiguration.tableID,
                 placeholder: "tblXXXX"
             )
@@ -328,24 +329,24 @@ struct SettingsView: View {
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
                     settingsTextField(
-                        label: "Todo",
+                        label: "status.todo",
                         text: $store.pipeline.preferences.feishuProviderConfiguration.todoStatusValue,
                         placeholder: "todo"
                     )
                     settingsTextField(
-                        label: "In Progress",
+                        label: "status.inProgress",
                         text: $store.pipeline.preferences.feishuProviderConfiguration.inProgressStatusValue,
                         placeholder: "in_progress"
                     )
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     settingsTextField(
-                        label: "In Review",
+                        label: "status.inReview",
                         text: $store.pipeline.preferences.feishuProviderConfiguration.inReviewStatusValue,
                         placeholder: "in_review"
                     )
                     settingsTextField(
-                        label: "Done",
+                        label: "status.done",
                         text: $store.pipeline.preferences.feishuProviderConfiguration.doneStatusValue,
                         placeholder: "done"
                     )
@@ -408,7 +409,7 @@ struct SettingsView: View {
         placeholder: String
     ) -> some View {
         LabeledContent {
-            TextField(placeholder, text: text)
+            TextField("", text: text, prompt: Text(verbatim: placeholder))
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 220)
         } label: {
@@ -418,16 +419,16 @@ struct SettingsView: View {
     }
 
     private func settingsSecureField(
-        label: String,
+        label: LocalizedStringKey,
         text: Binding<String>,
         placeholder: String
     ) -> some View {
         LabeledContent {
-            SecureField(placeholder, text: text)
+            SecureField("", text: text, prompt: Text(verbatim: placeholder))
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 220)
         } label: {
-            Text(label)
+            Text(label, bundle: lang.bundle)
                 .frame(width: 100, alignment: .trailing)
         }
     }
@@ -452,7 +453,7 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Looper")
+            Text(verbatim: "Looper")
                 .font(.title2.weight(.semibold))
 
             LabeledContent {
@@ -465,7 +466,10 @@ struct SettingsView: View {
             } label: {
                 Text("settings.build", bundle: lang.bundle)
             }
-            LabeledContent("Bundle ID", value: Bundle.main.bundleIdentifier ?? "com.jarvis.looper")
+            LabeledContent(
+                String(localized: "settings.bundleID", bundle: lang.bundle),
+                value: Bundle.main.bundleIdentifier ?? "com.jarvis.looper"
+            )
         }
         .foregroundStyle(.primary)
     }
