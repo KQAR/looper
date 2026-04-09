@@ -41,7 +41,7 @@ final class AppFeatureTests: XCTestCase {
         XCTAssertNil(store.state.pipeline.selectedPipelineID)
     }
 
-    func testOnAppearShowsSettingsWhenSetupIncomplete() async {
+    func testOnAppearDoesNotAutoPresentSettingsWhenSetupIncomplete() async {
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
         } withDependencies: {
@@ -56,11 +56,16 @@ final class AppFeatureTests: XCTestCase {
 
         await store.send(.onAppear)
         await store.receive(\.pipeline.onAppear)
-        await store.receive(\.pipeline.bootstrapResponse.success) {
-            $0.isSettingsPresented = true
-        }
+        await store.receive(\.pipeline.bootstrapResponse.success)
         await store.receive(\.loadRuns)
+        await store.receive(\.refreshTasksButtonTapped) {
+            $0.isLoadingTasks = true
+        }
         await store.receive(\.runResponse.success)
+        await store.receive(\.taskResponse.success) {
+            $0.isLoadingTasks = false
+        }
+        XCTAssertFalse(store.state.isSettingsPresented)
     }
 
     func testOnAppearLoadsTasksAndSelectsFirstTask() async {
@@ -128,6 +133,103 @@ final class AppFeatureTests: XCTestCase {
             $0.tasks = [firstTask, secondTask]
             $0.selectedTaskID = firstTask.id
         }
+    }
+
+    func testOnAppearInterruptsRecoveredInProgressRun() async {
+        let pipeline = Pipeline(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+        let task = LooperTask(
+            id: "task-1",
+            title: "Recovered task",
+            summary: "Summary",
+            status: .inProgress,
+            source: "Local",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let activeRun = Run(
+            id: UUID(uuidString: "AAAA0000-0000-0000-0000-000000000001")!,
+            pipelineID: pipeline.id,
+            taskID: task.id,
+            status: .running,
+            trigger: .startTask,
+            worktreePath: "/tmp/worktrees/run-1",
+            startedAt: Date(timeIntervalSince1970: 1_234_567_000),
+            finishedAt: nil,
+            exitCode: nil,
+            logPath: "/tmp/logs/run-1.log"
+        )
+        let finishedAt = Date(timeIntervalSince1970: 1_234_567_999)
+        let recorder = TaskStatusRecorder()
+
+        let store = TestStore(initialState: AppFeature.State()) {
+            AppFeature()
+        } withDependencies: {
+            $0.pipelineStoreClient.fetchPipelines = { [pipeline] }
+            $0.runStoreClient.fetchRuns = { [activeRun] }
+            $0.runStoreClient.saveRun = { _ in }
+            $0.appPreferencesClient.fetchPreferences = {
+                var preferences = AppPreferences()
+                preferences.hasCompletedOnboarding = true
+                return preferences
+            }
+            $0.taskProviderClient.fetchTasks = { _ in [task] }
+            $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
+                await recorder.record(taskID, status)
+            }
+            $0.pipelineTerminalClient.events = {
+                AsyncStream { continuation in
+                    continuation.finish()
+                }
+            }
+            $0.pipelineTerminalClient.attachSessionIfNeeded = { _ in
+                XCTFail("Recovered interrupted tasks should not auto-attach terminals")
+            }
+            $0.date.now = finishedAt
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.pipeline.onAppear)
+        await store.receive(\.pipeline.bootstrapResponse.success) {
+            $0.pipeline.pipelines = [pipeline]
+            $0.pipeline.selectedPipelineID = pipeline.id
+            $0.pipeline.preferences.hasCompletedOnboarding = true
+        }
+        await store.receive(\.loadRuns)
+        await store.receive(\.refreshTasksButtonTapped) {
+            $0.isLoadingTasks = true
+        }
+        await store.receive(\.runResponse.success) {
+            var interruptedRun = activeRun
+            interruptedRun.status = .failed
+            interruptedRun.finishedAt = finishedAt
+            $0.runs = [interruptedRun]
+            $0.recoveredInterruptedTaskIDs = [task.id]
+        }
+        await store.receive(\.taskResponse.success) {
+            $0.isLoadingTasks = false
+            $0.tasks = [task]
+            $0.tasks[id: task.id]?.status = .todo
+            $0.selectedTaskID = task.id
+            $0.recoveredInterruptedTaskIDs = []
+            $0.updatingTaskIDs = [task.id]
+        }
+        await store.receive(\.pipeline.selectPipeline) {
+            $0.pipeline.preferences.lastSelectedPipelineID = pipeline.id
+        }
+        await store.receive(\.taskStatusUpdateResponse.success) {
+            $0.updatingTaskIDs = []
+            $0.tasks[id: task.id]?.status = .todo
+        }
+
+        let events = await recorder.value()
+        XCTAssertEqual(events.first?.0, task.id)
+        XCTAssertEqual(events.first?.1, .todo)
     }
 
     func testStartSelectedTaskTriggersPipelineCreation() async {
@@ -239,6 +341,7 @@ final class AppFeatureTests: XCTestCase {
             exitCode: nil,
             logPath: "/tmp/looper-runs/persisted.log"
         )
+        let recoveredAt = Date(timeIntervalSince1970: 1_234_568_000)
 
         let store = TestStore(initialState: AppFeature.State()) {
             AppFeature()
@@ -255,6 +358,7 @@ final class AppFeatureTests: XCTestCase {
             }
             $0.pipelineTerminalClient.upsertSession = { _ in }
             $0.taskProviderClient.fetchTasks = { _ in [] }
+            $0.date.now = recoveredAt
         }
 
         await store.send(.pipeline(.onAppear))
@@ -279,7 +383,11 @@ final class AppFeatureTests: XCTestCase {
             $0.isLoadingTasks = true
         }
         await store.receive(\.runResponse.success) {
-            $0.runs = [persistedRun]
+            var recoveredRun = persistedRun
+            recoveredRun.status = .failed
+            recoveredRun.finishedAt = recoveredAt
+            $0.runs = [recoveredRun]
+            $0.recoveredInterruptedTaskIDs = [persistedRun.taskID]
         }
         await store.receive(\.taskResponse.success) {
             $0.isLoadingTasks = false

@@ -40,6 +40,7 @@ struct AppFeature {
         var runs: IdentifiedArrayOf<Run> = []
         var selectedTaskID: LooperTask.ID?
         var pendingRunTaskID: LooperTask.ID?
+        var recoveredInterruptedTaskIDs: Set<LooperTask.ID> = []
         var isLoadingTasks = false
         var updatingTaskIDs: Set<LooperTask.ID> = []
         var taskProviderErrorMessage: String?
@@ -53,6 +54,46 @@ struct AppFeature {
         var isCreatingLocalTask = false
         var pipelinePendingDeletionID: Pipeline.ID?
         var pipeline = PipelineFeature.State()
+
+        init(
+            tasks: IdentifiedArrayOf<LooperTask> = [],
+            runs: IdentifiedArrayOf<Run> = [],
+            selectedTaskID: LooperTask.ID? = nil,
+            pendingRunTaskID: LooperTask.ID? = nil,
+            recoveredInterruptedTaskIDs: Set<LooperTask.ID> = [],
+            isLoadingTasks: Bool = false,
+            updatingTaskIDs: Set<LooperTask.ID> = [],
+            taskProviderErrorMessage: String? = nil,
+            isSettingsPresented: Bool = false,
+            isInspectingTaskProvider: Bool = false,
+            taskProviderInspection: TaskProviderInspection? = nil,
+            isCheckingEnvironment: Bool = false,
+            environmentReport: EnvironmentSetupReport? = nil,
+            isSavingSettings: Bool = false,
+            isLocalTaskComposerPresented: Bool = false,
+            isCreatingLocalTask: Bool = false,
+            pipelinePendingDeletionID: Pipeline.ID? = nil,
+            pipeline: PipelineFeature.State = PipelineFeature.State()
+        ) {
+            self.tasks = tasks
+            self.runs = runs
+            self.selectedTaskID = selectedTaskID
+            self.pendingRunTaskID = pendingRunTaskID
+            self.recoveredInterruptedTaskIDs = recoveredInterruptedTaskIDs
+            self.isLoadingTasks = isLoadingTasks
+            self.updatingTaskIDs = updatingTaskIDs
+            self.taskProviderErrorMessage = taskProviderErrorMessage
+            self.isSettingsPresented = isSettingsPresented
+            self.isInspectingTaskProvider = isInspectingTaskProvider
+            self.taskProviderInspection = taskProviderInspection
+            self.isCheckingEnvironment = isCheckingEnvironment
+            self.environmentReport = environmentReport
+            self.isSavingSettings = isSavingSettings
+            self.isLocalTaskComposerPresented = isLocalTaskComposerPresented
+            self.isCreatingLocalTask = isCreatingLocalTask
+            self.pipelinePendingDeletionID = pipelinePendingDeletionID
+            self.pipeline = pipeline
+        }
     }
 
     enum Action: BindableAction {
@@ -267,8 +308,36 @@ struct AppFeature {
                 }
 
             case let .runResponse(.success(runs)):
-                state.runs = IdentifiedArray(uniqueElements: runs)
-                return .none
+                let interruptedRuns = runs.filter(\.isActive)
+                let recoveredRuns = runs.map { run in
+                    guard run.isActive else { return run }
+                    return run.finished(
+                        status: .failed,
+                        exitCode: nil,
+                        finishedAt: now
+                    )
+                }
+
+                state.runs = IdentifiedArray(uniqueElements: recoveredRuns)
+                state.recoveredInterruptedTaskIDs.formUnion(interruptedRuns.map(\.taskID))
+
+                let saveRecoveredRunsEffect: Effect<Action> = interruptedRuns.isEmpty
+                    ? .none
+                    : .run { [saveRun = runStoreClient.saveRun] send in
+                        for run in recoveredRuns where run.status == .failed && run.finishedAt != nil {
+                            do {
+                                try await saveRun(run)
+                            } catch {
+                                await send(.runPersistenceFailed(.init(description: error.localizedDescription)))
+                            }
+                        }
+                    }
+
+                let reconcileEffect = reconcileRecoveredInterruptedTasks(
+                    state: &state,
+                    updateStatus: taskProviderClient.updateTaskStatus
+                )
+                return .merge(saveRecoveredRunsEffect, reconcileEffect)
 
             case let .runResponse(.failure(error)),
                 let .runPersistenceFailed(error):
@@ -278,17 +347,22 @@ struct AppFeature {
             case let .taskResponse(.success(tasks)):
                 state.isLoadingTasks = false
                 state.tasks = IdentifiedArray(uniqueElements: tasks)
+                let reconcileInterruptedTasksEffect = reconcileRecoveredInterruptedTasks(
+                    state: &state,
+                    updateStatus: taskProviderClient.updateTaskStatus
+                )
+                let visibleTasks = Array(state.tasks)
 
                 if let selectedTaskID = state.selectedTaskID,
                    state.tasks[id: selectedTaskID] != nil
                 {
                     let selectionEffect = syncPipelineSelection(state: &state)
                     let attachEffect = attachTerminalsForDevelopingTasks(
-                        tasks: tasks,
+                        tasks: visibleTasks,
                         pipelines: state.pipeline.pipelines,
                         attachSession: pipelineTerminalClient.attachSessionIfNeeded
                     )
-                    return .merge(selectionEffect, attachEffect)
+                    return .merge(selectionEffect, attachEffect, reconcileInterruptedTasksEffect)
                 }
 
                 if let matchingTaskID = taskIDMatchingSelectedPipeline(state: state) {
@@ -301,11 +375,11 @@ struct AppFeature {
 
                 let selectionEffect = syncPipelineSelection(state: &state)
                 let attachEffect = attachTerminalsForDevelopingTasks(
-                    tasks: tasks,
+                    tasks: visibleTasks,
                     pipelines: state.pipeline.pipelines,
                     attachSession: pipelineTerminalClient.attachSessionIfNeeded
                 )
-                return .merge(selectionEffect, attachEffect)
+                return .merge(selectionEffect, attachEffect, reconcileInterruptedTasksEffect)
 
             case let .taskResponse(.failure(error)):
                 state.isLoadingTasks = false
@@ -548,19 +622,13 @@ struct AppFeature {
                 }
 
                 let loadRunsEffect: Effect<Action> = .send(.loadRuns)
-
-                if !payload.preferences.hasCompletedOnboarding {
-                    state.isSettingsPresented = true
-                    return loadRunsEffect
-                }
-
-                guard payload.preferences.taskProviderConfiguration.canFetchTasks else {
-                    return loadRunsEffect
-                }
+                let refreshTasksEffect: Effect<Action> = payload.preferences.taskProviderConfiguration.canFetchTasks
+                    ? .send(.refreshTasksButtonTapped)
+                    : .none
 
                 return .merge(
                     loadRunsEffect,
-                    .send(.refreshTasksButtonTapped)
+                    refreshTasksEffect
                 )
 
             case .pipeline(.savePreferencesFinished):
@@ -1343,6 +1411,41 @@ private func cleanupAllWorktreesEffect(
             try? await removeWorktree(pipeline.projectPath, worktreePath)
         }
     }
+}
+
+private func reconcileRecoveredInterruptedTasks(
+    state: inout AppFeature.State,
+    updateStatus: @escaping @Sendable (LooperTask.ID, LooperTask.Status, TaskProviderConfiguration) async throws -> Void
+) -> Effect<AppFeature.Action> {
+    let taskIDs = state.recoveredInterruptedTaskIDs.filter { taskID in
+        state.tasks[id: taskID]?.status == .inProgress
+    }
+
+    guard !taskIDs.isEmpty else { return .none }
+
+    for taskID in taskIDs {
+        state.tasks[id: taskID]?.status = .todo
+    }
+    state.recoveredInterruptedTaskIDs.subtract(taskIDs)
+
+    guard state.pipeline.preferences.taskProviderConfiguration.canFetchTasks else {
+        return .none
+    }
+
+    var effects: [Effect<AppFeature.Action>] = []
+    for taskID in taskIDs {
+        effects.append(
+            writeTaskStatus(
+                taskID: taskID,
+                status: .todo,
+                configuration: state.pipeline.preferences.taskProviderConfiguration,
+                state: &state,
+                updateStatus: updateStatus
+            )
+        )
+    }
+
+    return .merge(effects)
 }
 
 private func attachTerminalsForDevelopingTasks(
