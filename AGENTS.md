@@ -124,7 +124,7 @@ surface.sendText("claude --task \"...\"\n")
 
 ### Data Pipeline (Agent <-> App)
 
-- **PTY output** — terminal rendering and user interaction via libghostty-spm
+- **Execution = interactive PTY.** The run terminal launches the agent's full TUI (`claude "$(cat <run>.prompt.md)"`, `--continue` on resume) inside the worktree — the user watches and can take over (INTERACTION.md level-5 intervention). Run completion is signaled by a per-run exit-status file consumed on terminal close (`terminalEventReceived`): exit 0 → `inReview`, non-zero → `todo`. The headless SDK path (`AgentProcessClient`/`ClaudeAgentSDK`) is retained but dormant — reserved for future autopilot modes.
 - **Structured channel** — filesystem JSON contract (decided, see ROADMAP.md): agent and gate runner write reports to a fixed worktree path (e.g. `.looper/report.json`); Looper watches it. Carries gate results, verify verdicts, failure reports. MCP may replace the transport later.
 
 ## Architecture

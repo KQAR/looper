@@ -66,21 +66,38 @@ struct Pipeline: Equatable, Identifiable, Sendable {
         runAttachScript(executionPath: executionPath, resume: false)
     }
 
-    /// The run terminal is an observation window onto the SDK-driven agent
-    /// (the SDK is the only executor — never launch a second agent here).
-    /// It tails the run's live log; Ctrl-C drops into an interactive shell
-    /// in the worktree for forensics.
-    func runObservationScript(executionPath: String, logPath: String) -> String {
+    /// Launches the agent interactively in the run terminal — the terminal
+    /// IS the agent (full TUI; the user can watch, type, and take over,
+    /// INTERACTION.md intervention level 5). The initial prompt is read
+    /// from a per-run prompt file; the exit status lands in a per-run file
+    /// so concurrent runs never clobber each other. Quitting the TUI ends
+    /// the run: exit 0 → review, non-zero → back to todo.
+    func runInteractiveAgentScript(
+        executionPath: String,
+        promptPath: String,
+        exitStatusPath: String,
+        resume: Bool
+    ) -> String {
         let escapedExecutionPath = executionPath.shellQuoted
-        let escapedLogPath = logPath.shellQuoted
+        let escapedPromptPath = promptPath.shellQuoted
+        let escapedStatusFile = exitStatusPath.shellQuoted
 
-        let script = """
-        cd \(escapedExecutionPath) && \
-        touch \(escapedLogPath) && \
-        clear; tail -n +1 -F \(escapedLogPath); exec /bin/zsh -i
+        let baseCommand = agentCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        let agent = baseCommand.isEmpty ? "claude" : baseCommand
+        // On resume, --continue reopens the worktree's previous session and
+        // the prompt (task context + fresh steering notes) arrives as the
+        // next user message.
+        let command = resume
+            ? "\(agent) --continue \"$(cat \(escapedPromptPath))\""
+            : "\(agent) \"$(cat \(escapedPromptPath))\""
+
+        let wrappedScript = """
+        rm -f \(escapedStatusFile); \
+        cd \(escapedExecutionPath) && \(command); \
+        s=$?; printf '%s' "$s" > \(escapedStatusFile); exit "$s"
         """
 
-        return "/bin/zsh -lc \(script.shellQuoted)"
+        return "/bin/zsh -lc \(wrappedScript.shellQuoted)"
     }
 
     func runAttachScript(executionPath: String, resume: Bool) -> String {

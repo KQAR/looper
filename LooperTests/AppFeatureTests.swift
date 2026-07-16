@@ -1308,10 +1308,14 @@ final class AppFeatureTests: XCTestCase {
 
         actor CancelRecorder {
             var cancelledIDs: [UUID] = []
+            var removedSessionIDs: [UUID] = []
             func record(_ id: UUID) { cancelledIDs.append(id) }
+            func recordRemoval(_ id: UUID) { removedSessionIDs.append(id) }
             func value() -> [UUID] { cancelledIDs }
+            func removals() -> [UUID] { removedSessionIDs }
         }
         let cancelRecorder = CancelRecorder()
+        let cancelledAt = Date(timeIntervalSince1970: 1_234_568_000)
 
         let store = TestStore(
             initialState: AppFeature.State(
@@ -1324,15 +1328,26 @@ final class AppFeatureTests: XCTestCase {
         ) {
             AppFeature()
         } withDependencies: {
+            $0.date.now = cancelledAt
+            $0.runStoreClient.saveRun = { _ in }
             $0.agentProcessClient.cancel = { runID in
                 await cancelRecorder.record(runID)
             }
+            $0.pipelineTerminalClient.removeRunSession = { runID in
+                await cancelRecorder.recordRemoval(runID)
+            }
         }
 
-        await store.send(.cancelRunButtonTapped(runID))
+        await store.send(.cancelRunButtonTapped(runID)) {
+            $0.runs[id: runID]?.status = .failed
+            $0.runs[id: runID]?.finishedAt = cancelledAt
+        }
+        await store.finish()
 
         let cancelled = await cancelRecorder.value()
         XCTAssertEqual(cancelled, [runID])
+        let removed = await cancelRecorder.removals()
+        XCTAssertEqual(removed, [runID])
     }
 
     func testCancelInactiveRunIsNoOp() async {

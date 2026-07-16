@@ -191,9 +191,46 @@ struct AppFeature {
 
             case let .cancelRunButtonTapped(runID):
                 guard let run = state.runs[id: runID], run.isActive else { return .none }
-                return .run { [cancelAgent = agentProcessClient.cancel] _ in
-                    await cancelAgent(runID)
+                // The interactive session dies with its terminal; the run is
+                // settled here directly (the close event may not fire when we
+                // tear the surface down ourselves).
+                let finishedRun = run.finished(status: .failed, exitCode: nil, finishedAt: now)
+                state.runs[id: runID] = finishedRun
+
+                var effects: [Effect<Action>] = [
+                    .run { [
+                        cancelAgent = agentProcessClient.cancel,
+                        removeRunSession = pipelineTerminalClient.removeRunSession
+                    ] _ in
+                        await cancelAgent(runID)
+                        await removeRunSession(runID)
+                    },
+                    .run { [saveRun = runStoreClient.saveRun] send in
+                        do { try await saveRun(finishedRun) } catch {
+                            await send(.runPersistenceFailed(.init(description: error.localizedDescription)))
+                        }
+                    },
+                ]
+
+                let hasOtherActiveRuns = state.runs.contains {
+                    $0.taskID == run.taskID && $0.isActive && $0.id != runID
                 }
+                if !hasOtherActiveRuns,
+                   state.tasks[id: run.taskID]?.status == .inProgress,
+                   state.pipeline.preferences.taskProviderConfiguration.canFetchTasks
+                {
+                    effects.append(
+                        writeTaskStatus(
+                            taskID: run.taskID,
+                            status: .todo,
+                            configuration: state.pipeline.preferences.taskProviderConfiguration,
+                            state: &state,
+                            updateStatus: taskProviderClient.updateTaskStatus
+                        )
+                    )
+                }
+
+                return .merge(effects)
 
             case let .deletePipelineMenuTapped(id):
                 state.pipelinePendingDeletionID = id
@@ -902,14 +939,23 @@ struct AppFeature {
                     guard let pipeline = state.pipeline.pipelines[id: run.pipelineID] else {
                         return .none
                     }
-                    return postRunGitEffect(
-                        run: finishedRun,
-                        task: task,
-                        projectPath: pipeline.projectPath,
-                        postRunAction: state.pipeline.preferences.postRunGitAction,
-                        pushBranch: gitWorktreeClient.pushBranch,
-                        createPullRequest: gitWorktreeClient.createPullRequest,
-                        removeWorktree: gitWorktreeClient.removeWorktree
+                    // Capture the run's diff before any worktree cleanup can
+                    // destroy the evidence.
+                    return .concatenate(
+                        captureRunDiffEffect(
+                            run: finishedRun,
+                            projectPath: pipeline.projectPath,
+                            captureDiff: gitWorktreeClient.captureDiff
+                        ),
+                        postRunGitEffect(
+                            run: finishedRun,
+                            task: task,
+                            projectPath: pipeline.projectPath,
+                            postRunAction: state.pipeline.preferences.postRunGitAction,
+                            pushBranch: gitWorktreeClient.pushBranch,
+                            createPullRequest: gitWorktreeClient.createPullRequest,
+                            removeWorktree: gitWorktreeClient.removeWorktree
+                        )
                     )
                 }()
 
@@ -1059,7 +1105,6 @@ extension AppFeature {
             saveRun: runStoreClient.saveRun,
             createWorktree: gitWorktreeClient.createWorktree,
             writeTaskContext: gitWorktreeClient.writeTaskContext,
-            executeAgent: agentProcessClient.execute,
             // Keep terminal for pipeline-level shell (fallback)
             upsertRunSession: pipelineTerminalClient.upsertRunSession,
             bootstrapRunSession: pipelineTerminalClient.bootstrapRunSession
@@ -1491,17 +1536,11 @@ private func startRunWithWorktreeEffect(
     saveRun: @escaping @Sendable (Run) async throws -> Void,
     createWorktree: @escaping @Sendable (String, String) async throws -> String,
     writeTaskContext: @escaping @Sendable (String, LooperTask) async throws -> Void,
-    executeAgent: @escaping @Sendable (AgentProcessRequest) async -> AsyncStream<AgentEvent>,
     upsertRunSession: @escaping @Sendable (UUID, Pipeline, String, Bool) async -> Void,
     bootstrapRunSession: @escaping @Sendable (UUID) async -> Void
 ) -> Effect<AppFeature.Action> {
     let branchName = worktreeBranchName(taskID: task.id, runID: runID)
     let isResume = trigger == .resumeTask && reuseWorktreePath != nil
-    let previousSessionID = isResume
-        ? state.runs.first(where: {
-            $0.taskID == task.id && $0.pipelineID == pipeline.id && $0.status == .failed
-        })?.sessionID
-        : nil
 
     // Create the run record immediately (worktreePath set later via effect)
     let run = Run(
@@ -1518,10 +1557,18 @@ private func startRunWithWorktreeEffect(
     )
     state.runs.insert(run, at: 0)
 
-    let agentCommand = pipeline.agentCommand
-    // The environment check's resolution of "claude" — lets bare-name agent
-    // commands launch even when the binary is outside the GUI process PATH.
-    let resolvedAgentPath = state.environmentReport?.claude.resolvedPath
+    // The terminal's login shell suffers the same GUI PATH gap as this
+    // process — swap a bare "claude" for the environment check's absolute
+    // path so the TUI launches regardless of shell rc files.
+    var sessionPipeline = pipeline
+    if let resolvedAgentPath = state.environmentReport?.claude.resolvedPath {
+        let command = pipeline.agentCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        if command == "claude" {
+            sessionPipeline.agentCommand = resolvedAgentPath.shellQuoted
+        } else if command.hasPrefix("claude ") {
+            sessionPipeline.agentCommand = resolvedAgentPath.shellQuoted + command.dropFirst("claude".count)
+        }
+    }
 
     // Deliver queued steering notes with this run (boundary delivery,
     // INTERACTION.md level-1 intervention); consume them on delivery.
@@ -1548,7 +1595,7 @@ private func startRunWithWorktreeEffect(
     \(task.summary)
     """ + steeringNotesSection
 
-    return .run { send in
+    return .run { [sessionPipeline] send in
         do {
             // 1. Create or reuse git worktree
             let worktreePath: String
@@ -1561,32 +1608,25 @@ private func startRunWithWorktreeEffect(
             // 2. Write/refresh TASK.md context
             try await writeTaskContext(worktreePath, task)
 
-            // 3. Persist run with worktreePath
+            // 3. Write the interactive agent's prompt — outside the worktree
+            //    so it never pollutes the run's diff.
+            let promptPath = Run.defaultPromptPath(for: runID)
+            try? FileManager.default.createDirectory(
+                atPath: (promptPath as NSString).deletingLastPathComponent,
+                withIntermediateDirectories: true
+            )
+            try taskDescription.write(toFile: promptPath, atomically: true, encoding: .utf8)
+
+            // 4. Persist run with worktreePath
             var updatedRun = run
             updatedRun.worktreePath = worktreePath
             try await saveRun(updatedRun)
 
-            // 4. Create the run's observation terminal and mark it for
-            //    attach — without the bootstrap call the observation script
-            //    is never injected and the terminal stays a bare shell.
-            await upsertRunSession(runID, pipeline, worktreePath, isResume)
+            // 5. Launch the agent interactively in the run terminal — the
+            //    terminal IS the agent (full TUI). Run completion arrives
+            //    via terminalEventReceived when the TUI exits.
+            await upsertRunSession(runID, sessionPipeline, worktreePath, isResume)
             await bootstrapRunSession(runID)
-
-            // 5. Launch agent process with structured JSON output
-            let request = AgentProcessRequest(
-                runID: runID,
-                workingDirectory: worktreePath,
-                taskDescription: taskDescription,
-                agentCommand: agentCommand,
-                resumeSessionID: previousSessionID,
-                resolvedExecutablePath: resolvedAgentPath,
-                logPath: run.logPath
-            )
-
-            let events = await executeAgent(request)
-            for await event in events {
-                await send(.agentEventReceived(runID: runID, event))
-            }
         } catch {
             await send(
                 .runPersistenceFailed(.init(description: error.localizedDescription))

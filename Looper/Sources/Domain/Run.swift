@@ -86,6 +86,19 @@ extension Run {
         artifactPath(for: runID, extension: "diff")
     }
 
+    /// The initial prompt handed to the interactive agent (task context +
+    /// steering notes). Lives outside the worktree so it never pollutes
+    /// the run's diff.
+    static func defaultPromptPath(for runID: UUID) -> String {
+        artifactPath(for: runID, extension: "prompt.md")
+    }
+
+    /// Per-run exit-status file — per run, not per pipeline, so concurrent
+    /// runs never clobber each other's exit codes.
+    static func defaultExitStatusPath(for runID: UUID) -> String {
+        artifactPath(for: runID, extension: "exit-status")
+    }
+
     private static func artifactPath(for runID: UUID, extension ext: String) -> String {
         URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("looper-runs", isDirectory: true)

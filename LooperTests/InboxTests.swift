@@ -362,8 +362,10 @@ final class InboxTests: XCTestCase {
         )
         let runID = UUID(uuidString: "CCCC0000-0000-0000-0000-000000000001")!
         let startedAt = Date(timeIntervalSince1970: 6_000)
-        let promptRecorder = AgentPromptRecorder()
         let recorder = TaskStatusRecorder()
+        let promptPath = Run.defaultPromptPath(for: runID)
+        try? FileManager.default.removeItem(atPath: promptPath)
+        defer { try? FileManager.default.removeItem(atPath: promptPath) }
 
         var initialState = AppFeature.State(
             tasks: [task],
@@ -380,11 +382,8 @@ final class InboxTests: XCTestCase {
             $0.runStoreClient.saveRun = { _ in }
             $0.gitWorktreeClient.createWorktree = { _, _ in "/tmp/worktrees/run-1" }
             $0.gitWorktreeClient.writeTaskContext = { _, _ in }
-            $0.agentProcessClient.execute = { request in
-                await promptRecorder.record(request.taskDescription)
-                return AsyncStream { $0.finish() }
-            }
             $0.pipelineTerminalClient.upsertRunSession = { _, _, _, _ in }
+            $0.pipelineTerminalClient.bootstrapRunSession = { _ in }
             $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
                 await recorder.record(taskID, status)
             }
@@ -395,7 +394,8 @@ final class InboxTests: XCTestCase {
         await store.finish()
 
         XCTAssertNil(store.state.pendingSteeringNotes[task.id])
-        let prompt = await promptRecorder.value()
+        // The interactive agent reads its prompt from the per-run file.
+        let prompt = try? String(contentsOfFile: promptPath, encoding: .utf8)
         XCTAssertNotNil(prompt)
         XCTAssertTrue(prompt?.contains("Steering Notes from the owner") == true)
         XCTAssertTrue(prompt?.contains("- Cover the timeout branch") == true)
@@ -771,14 +771,3 @@ actor CleanupRecorder {
     }
 }
 
-actor AgentPromptRecorder {
-    private var prompt: String?
-
-    func record(_ prompt: String) {
-        self.prompt = prompt
-    }
-
-    func value() -> String? {
-        prompt
-    }
-}

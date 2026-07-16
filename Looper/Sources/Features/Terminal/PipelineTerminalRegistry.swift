@@ -304,12 +304,14 @@ final class PipelineTerminalSession: NSObject {
         }
 
         let inWindow = terminalView.window != nil
-        // Run sessions observe the SDK-driven agent via its log; only
-        // pipeline-level sessions run the legacy attach command.
+        // Run sessions launch the agent interactively — the terminal IS the
+        // agent. Pipeline-level sessions keep the legacy attach command.
         let script = if let runID {
-            pipeline.runObservationScript(
+            pipeline.runInteractiveAgentScript(
                 executionPath: pipeline.executionPath,
-                logPath: Run.defaultLogPath(for: runID)
+                promptPath: Run.defaultPromptPath(for: runID),
+                exitStatusPath: Run.defaultExitStatusPath(for: runID),
+                resume: resume
             )
         } else {
             pipeline.runAttachScript(
@@ -368,7 +370,13 @@ extension PipelineTerminalSession:
 
 private extension PipelineTerminalSession {
     func consumeExitCode() -> Int32? {
-        let url = pipeline.exitStatusFileURL
+        // Run sessions use per-run status files; pipeline sessions keep the
+        // legacy pipeline-level file.
+        let url = if let runID {
+            URL(fileURLWithPath: Run.defaultExitStatusPath(for: runID))
+        } else {
+            pipeline.exitStatusFileURL
+        }
         guard let data = try? Data(contentsOf: url) else {
             return nil
         }
