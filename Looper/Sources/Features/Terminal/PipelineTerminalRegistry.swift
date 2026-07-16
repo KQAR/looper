@@ -303,6 +303,16 @@ final class PipelineTerminalSession: NSObject {
             return
         }
 
+        // No surface yet = no pty: sendText would silently drop the script.
+        // Leave the attach pending; terminalDidResize retries when the
+        // surface comes alive.
+        guard surfaceSize != nil else {
+            logger.info("[Session:\(self.pipeline.name)] attach deferred (surface not ready)")
+            didAttemptAttach = false
+            phase = .bootstrapping
+            return
+        }
+
         let inWindow = terminalView.window != nil
         // Run sessions launch the agent interactively — the terminal IS the
         // agent. Pipeline-level sessions keep the legacy attach command.
@@ -342,7 +352,14 @@ extension PipelineTerminalSession:
     }
 
     func terminalDidResize(_ size: TerminalGridMetrics) {
+        let surfaceJustCameAlive = surfaceSize == nil
         surfaceSize = size
+        // The surface is the pty: until it exists, sendText silently drops
+        // input. A pending attach retries the moment the surface is live.
+        if surfaceJustCameAlive, shouldAttachWhenReady, !didAttemptAttach {
+            logger.info("[Session:\(self.pipeline.name)] surface alive, retrying pending attach")
+            scheduleAttachIfNeeded()
+        }
     }
 
     func terminalDidChangeFocus(_ focused: Bool) {
