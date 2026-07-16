@@ -127,8 +127,8 @@ private actor AgentProcessLiveManager {
             if Task.isCancelled {
                 continuation.yield(cancelledResult())
             } else {
-                logger.error("[AgentProcess:\(request.runID.uuidString.prefix(8))] failed: \(String(describing: error))")
-                continuation.yield(errorResult("Failed to launch agent: \(error.localizedDescription)"))
+                logger.error("[AgentProcess:\(request.runID.uuidString.prefix(8))] failed: \(String(describing: error), privacy: .public)")
+                continuation.yield(errorResult("Agent failed: \(String(describing: error))"))
             }
         }
 
@@ -142,7 +142,7 @@ private extension AgentCommandConfiguration {
         options.stderr = { stderr in
             let message = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !message.isEmpty else { return }
-            logger.debug("[AgentProcess:\(runID.uuidString.prefix(8))][stderr] \(message)")
+            logger.debug("[AgentProcess:\(runID.uuidString.prefix(8))][stderr] \(message, privacy: .public)")
         }
         return options
     }

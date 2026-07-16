@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.looper", category: "JSONLineParser")
 
 /// Parses newline-delimited JSON from the CLI stdout into ``StdoutMessage`` values.
 enum JSONLineParser {
@@ -11,7 +14,8 @@ enum JSONLineParser {
     /// Parse a single JSON line into a ``StdoutMessage``.
     ///
     /// - Parameter line: A single line of JSON text from the CLI stdout.
-    /// - Returns: The parsed message, or nil if the line is empty or whitespace.
+    /// - Returns: The parsed message, or nil if the line is empty, whitespace,
+    ///   or an event this SDK build does not recognize.
     static func parse(_ line: String) throws -> StdoutMessage? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -34,8 +38,19 @@ enum JSONLineParser {
             return .keepAlive
 
         default:
-            let message = try decoder.decode(SDKMessage.self, from: data)
-            return .message(message)
+            // Forward compatibility: the CLI grows message types and system
+            // subtypes faster than this vendored SDK. An event we cannot
+            // decode must be skipped, never kill the whole stream — one
+            // unknown `system/thinking_tokens` line used to fail the run.
+            do {
+                let message = try decoder.decode(SDKMessage.self, from: data)
+                return .message(message)
+            } catch let error as DecodingError {
+                logger.debug(
+                    "skipping unrecognized CLI event type=\(typeInfo.type, privacy: .public): \(String(describing: error), privacy: .public)"
+                )
+                return nil
+            }
         }
     }
 

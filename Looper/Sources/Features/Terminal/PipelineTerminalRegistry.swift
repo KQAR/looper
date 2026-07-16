@@ -312,10 +312,9 @@ final class PipelineTerminalSession: NSObject {
         logger.debug("[Session:\(self.pipeline.name)] script=\(script)")
 
         terminalView.window?.makeFirstResponder(terminalView)
-        terminalView.insertText(
-            script + "\n",
-            replacementRange: NSRange(location: NSNotFound, length: 0)
-        )
+        // libghostty 1.2 removed the NSTextInputClient insertText path for
+        // synthetic input; sendText is the public pty-injection API.
+        terminalView.sendText(script + "\n")
         phase = .attached
         logger.info("[Session:\(self.pipeline.name)] attach script sent, phase=attached")
     }
