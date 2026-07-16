@@ -259,6 +259,10 @@ final class PipelineTerminalSession: NSObject {
     }
 
     func scheduleAttach() {
+        // Requesting an attach IS the "attach when ready" signal — the
+        // deferred-retry paths (terminal created late, surface not yet
+        // alive) are gated on this flag.
+        shouldAttachWhenReady = true
         didAttemptAttach = false
         phase = .idle
         scheduleAttachIfNeeded()
