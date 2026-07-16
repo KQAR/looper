@@ -1566,8 +1566,11 @@ private func startRunWithWorktreeEffect(
             updatedRun.worktreePath = worktreePath
             try await saveRun(updatedRun)
 
-            // 4. Also create a pipeline-level terminal (for manual debug access)
+            // 4. Create the run's observation terminal and mark it for
+            //    attach — without the bootstrap call the observation script
+            //    is never injected and the terminal stays a bare shell.
             await upsertRunSession(runID, pipeline, worktreePath, isResume)
+            await bootstrapRunSession(runID)
 
             // 5. Launch agent process with structured JSON output
             let request = AgentProcessRequest(

@@ -125,7 +125,11 @@ private enum GitWorktreeIO {
         // content; the worktree is disposable, so mutating its index is fine.
         _ = try? runGit(in: worktreePath, args: ["add", "-N", "."])
         let base = try detectDefaultBranch(projectPath: projectPath)
-        return try runGit(in: worktreePath, args: ["diff", base])
+        // Anchor on the fork point so upstream drift on the base branch
+        // never pollutes the run's own changes.
+        let anchor = (try? runGit(in: worktreePath, args: ["merge-base", base, "HEAD"]))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return try runGit(in: worktreePath, args: ["diff", anchor?.isEmpty == false ? anchor! : base])
     }
 
     static func removeWorktreeDirectory(worktreePath: String) throws {
@@ -232,7 +236,9 @@ private enum GitWorktreeIO {
             }
         }
 
-        for branch in ["origin/main", "origin/master"] {
+        // Local-only repos have no origin/* refs at all — fall through to
+        // local main/master before giving up to HEAD.
+        for branch in ["origin/main", "origin/master", "main", "master"] {
             if (try? runGit(
                 in: projectPath,
                 args: ["rev-parse", "--verify", branch]
