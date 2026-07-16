@@ -14,6 +14,9 @@ struct AgentProcessRequest: Sendable, Equatable {
     /// (ExecutableResolver) — lets a bare "claude" command launch even when
     /// the binary lives outside the GUI process PATH.
     var resolvedExecutablePath: String?
+    /// When set, formatted agent events are appended here so the run
+    /// terminal can tail them live.
+    var logPath: String?
 }
 
 @DependencyClient
@@ -95,6 +98,9 @@ private actor AgentProcessLiveManager {
                 "[AgentProcess:\(request.runID.uuidString.prefix(8))] launching via SDK: \(configuration.executableDescription)"
             )
 
+            let runLog = RunLogWriter(path: request.logPath)
+            runLog.writeHeader(command: configuration.executableDescription)
+
             let query = try ClaudeAgentSDK.query(
                 prompt: request.taskDescription,
                 options: configuration.optionsWithStderrLogger(runID: request.runID)
@@ -110,6 +116,7 @@ private actor AgentProcessLiveManager {
                         if case .result = event {
                             didReceiveResult = true
                         }
+                        runLog.write(event)
                         continuation.yield(event)
                     }
                 }
@@ -145,6 +152,67 @@ private extension AgentCommandConfiguration {
             logger.debug("[AgentProcess:\(runID.uuidString.prefix(8))][stderr] \(message, privacy: .public)")
         }
         return options
+    }
+}
+
+/// Appends human-readable agent events to the run log so the run terminal
+/// (which tails this file) shows the agent working live. Best-effort:
+/// logging must never fail the run.
+private struct RunLogWriter: Sendable {
+    private let path: String?
+
+    init(path: String?) {
+        self.path = path
+        guard let path else { return }
+        let directory = (path as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(
+            atPath: directory,
+            withIntermediateDirectories: true
+        )
+        if !FileManager.default.fileExists(atPath: path) {
+            FileManager.default.createFile(atPath: path, contents: nil)
+        }
+    }
+
+    func writeHeader(command: String) {
+        append("\u{1B}[2m── run started · \(command) ──\u{1B}[0m\n")
+    }
+
+    func write(_ event: AgentEvent) {
+        switch event {
+        case let .initialized(sessionID, model):
+            append("\u{1B}[2msession \(sessionID) · \(model)\u{1B}[0m\n")
+
+        case let .toolUse(name, inputSummary):
+            let summary = inputSummary.isEmpty ? name : "\(name) \(inputSummary)"
+            append("\u{1B}[36m→ \(summary)\u{1B}[0m\n")
+
+        case let .toolResult(isError):
+            if isError {
+                append("\u{1B}[31m✗ tool call failed\u{1B}[0m\n")
+            }
+
+        case let .text(text):
+            append(text.hasSuffix("\n") ? text : text + "\n")
+
+        case let .result(result):
+            let seconds = Double(result.durationMs) / 1000
+            let verdict = result.isError ? "\u{1B}[31mfailed\u{1B}[0m" : "\u{1B}[32msucceeded\u{1B}[0m"
+            append(
+                "\u{1B}[2m── run \u{1B}[0m\(verdict)\u{1B}[2m · \(String(format: "%.0f", seconds))s · $\(String(format: "%.4f", result.costUSD)) · \(result.numTurns) turns ──\u{1B}[0m\n"
+            )
+            if result.isError, !result.resultText.isEmpty {
+                append("\u{1B}[31m\(result.resultText)\u{1B}[0m\n")
+            }
+        }
+    }
+
+    private func append(_ text: String) {
+        guard let path else { return }
+        guard let handle = FileHandle(forWritingAtPath: path) else { return }
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: Data(text.utf8))
     }
 }
 

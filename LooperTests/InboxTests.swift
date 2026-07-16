@@ -179,6 +179,98 @@ final class InboxTests: XCTestCase {
         XCTAssertEqual(state.inboxQuietRunCount, 1)
     }
 
+    // MARK: - Diff evidence
+
+    func testRunDiffCapturedUpdatesRunAndCardExposesDiff() async {
+        let pipeline = Self.demoPipeline()
+        let run = Run(
+            id: UUID(uuidString: "AAAA0000-0000-0000-0000-000000000001")!,
+            pipelineID: pipeline.id,
+            taskID: "task-1",
+            status: .succeeded,
+            trigger: .startTask,
+            startedAt: Date(timeIntervalSince1970: 1_000),
+            finishedAt: Date(timeIntervalSince1970: 2_000),
+            logPath: "/tmp/logs/run-1.log"
+        )
+        let task = LooperTask(
+            id: "task-1",
+            title: "Fix login",
+            summary: "Summary",
+            status: .inReview,
+            source: "Local",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+        let savedRuns = CleanupRecorder()
+
+        var initialState = AppFeature.State(tasks: [task], runs: [run])
+        initialState.pipeline.pipelines = [pipeline]
+
+        let store = TestStore(initialState: initialState) {
+            AppFeature()
+        } withDependencies: {
+            $0.runStoreClient.saveRun = { run in await savedRuns.record(run.id.uuidString) }
+        }
+
+        await store.send(.runDiffCaptured(runID: run.id, diffPath: "/tmp/looper-runs/run-1.diff")) {
+            $0.runs[id: run.id]?.diffPath = "/tmp/looper-runs/run-1.diff"
+        }
+        await store.finish()
+
+        let saved = await savedRuns.values()
+        XCTAssertEqual(saved, [run.id.uuidString])
+        XCTAssertEqual(
+            store.state.inboxCards[id: "review-task-1"]?.diffPath,
+            "/tmp/looper-runs/run-1.diff"
+        )
+    }
+
+    func testViewDiffLoadsPatchIntoPresentedDiff() async throws {
+        let diffPath = NSTemporaryDirectory() + "looper-test-\(UUID().uuidString).diff"
+        try "+++ b/File.swift\n+let x = 1".write(toFile: diffPath, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(atPath: diffPath) }
+
+        let pipeline = Self.demoPipeline()
+        var run = Run(
+            id: UUID(uuidString: "AAAA0000-0000-0000-0000-000000000001")!,
+            pipelineID: pipeline.id,
+            taskID: "task-1",
+            status: .succeeded,
+            trigger: .startTask,
+            startedAt: Date(timeIntervalSince1970: 1_000),
+            finishedAt: Date(timeIntervalSince1970: 2_000),
+            logPath: "/tmp/logs/run-1.log"
+        )
+        run.diffPath = diffPath
+        let task = LooperTask(
+            id: "task-1",
+            title: "Fix login",
+            summary: "Summary",
+            status: .inReview,
+            source: "Local",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
+
+        var initialState = AppFeature.State(tasks: [task], runs: [run])
+        initialState.pipeline.pipelines = [pipeline]
+
+        let store = TestStore(initialState: initialState) {
+            AppFeature()
+        }
+
+        await store.send(.inboxViewDiffTapped("task-1"))
+        await store.receive(\.inboxDiffLoaded) {
+            $0.presentedDiff = PresentedDiff(
+                taskTitle: "Fix login",
+                patch: "+++ b/File.swift\n+let x = 1"
+            )
+        }
+
+        await store.send(.inboxDiffDismissed) {
+            $0.presentedDiff = nil
+        }
+    }
+
     // MARK: - Send back queues a steering note
 
     func testSendBackQueuesSteeringNoteAndReturnsTaskToTodo() async {

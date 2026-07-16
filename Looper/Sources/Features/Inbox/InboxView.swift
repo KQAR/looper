@@ -181,6 +181,15 @@ struct InboxView: View {
                 }
                 .buttonStyle(.glassProminent)
 
+                if card.diffPath != nil {
+                    Button {
+                        store.send(.inboxViewDiffTapped(taskID))
+                    } label: {
+                        Text("inbox.action.viewDiff", bundle: lang.bundle)
+                    }
+                    .buttonStyle(.glass)
+                }
+
                 Button {
                     sendBackCardID = card.id
                     sendBackReason = ""
@@ -197,6 +206,15 @@ struct InboxView: View {
                     Text("inbox.action.retry", bundle: lang.bundle)
                 }
                 .buttonStyle(.glassProminent)
+
+                if card.diffPath != nil {
+                    Button {
+                        store.send(.inboxViewDiffTapped(taskID))
+                    } label: {
+                        Text("inbox.action.viewDiff", bundle: lang.bundle)
+                    }
+                    .buttonStyle(.glass)
+                }
 
                 if let worktreePath {
                     Button {

@@ -47,6 +47,10 @@ extension AppFeature.State {
                 continue
             }
 
+            let latestRun = runs
+                .filter { $0.taskID == task.id }
+                .max(by: { $0.startedAt < $1.startedAt })
+
             switch task.status {
             case .inReview:
                 cards.append(
@@ -55,14 +59,15 @@ extension AppFeature.State {
                         kind: .reviewRequest(taskID: task.id),
                         title: task.title,
                         detail: String(localized: "inbox.card.review.detail", bundle: .localized),
-                        pipelineName: pipelineName
+                        pipelineName: pipelineName,
+                        diffPath: latestRun?.diffPath
                     )
                 )
 
             case .todo, .inProgress:
-                let taskRuns = runs.filter { $0.taskID == task.id }
-                guard !taskRuns.contains(where: \.isActive),
-                      let latestRun = taskRuns.max(by: { $0.startedAt < $1.startedAt }),
+                guard let latestRun,
+                      !latestRun.isActive,
+                      !runs.contains(where: { $0.taskID == task.id && $0.isActive }),
                       latestRun.status == .failed
                 else { break }
                 cards.append(
@@ -76,7 +81,8 @@ extension AppFeature.State {
                         title: task.title,
                         detail: String(localized: "inbox.card.failure.detail", bundle: .localized),
                         pipelineName: pipelineName,
-                        occurredAt: latestRun.finishedAt
+                        occurredAt: latestRun.finishedAt,
+                        diffPath: latestRun.diffPath
                     )
                 )
 

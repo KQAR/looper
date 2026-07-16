@@ -31,6 +31,18 @@ struct AppView: View {
         .background { surfaceKeyboardShortcuts }
         .sheet(
             isPresented: Binding(
+                get: { store.presentedDiff != nil },
+                set: { if !$0 { store.send(.inboxDiffDismissed) } }
+            )
+        ) {
+            if let diff = store.presentedDiff {
+                DiffView(diff: diff) {
+                    store.send(.inboxDiffDismissed)
+                }
+            }
+        }
+        .sheet(
+            isPresented: Binding(
                 get: { store.isSettingsPresented },
                 set: { if !$0 { store.send(.dismissSettingsButtonTapped) } }
             )

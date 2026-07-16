@@ -304,10 +304,19 @@ final class PipelineTerminalSession: NSObject {
         }
 
         let inWindow = terminalView.window != nil
-        let script = pipeline.runAttachScript(
-            executionPath: pipeline.executionPath,
-            resume: resume
-        )
+        // Run sessions observe the SDK-driven agent via its log; only
+        // pipeline-level sessions run the legacy attach command.
+        let script = if let runID {
+            pipeline.runObservationScript(
+                executionPath: pipeline.executionPath,
+                logPath: Run.defaultLogPath(for: runID)
+            )
+        } else {
+            pipeline.runAttachScript(
+                executionPath: pipeline.executionPath,
+                resume: resume
+            )
+        }
         logger.info("[Session:\(self.pipeline.name)] sending attach script, inWindow=\(inWindow), scriptLen=\(script.count)")
         logger.debug("[Session:\(self.pipeline.name)] script=\(script)")
 

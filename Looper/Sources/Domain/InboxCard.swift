@@ -23,6 +23,8 @@ struct InboxCard: Equatable, Identifiable, Sendable {
     var detail: String
     var pipelineName: String?
     var occurredAt: Date?
+    /// Captured patch of the task's latest run, when evidence exists.
+    var diffPath: String?
 
     /// System cards float above all Run cards; failures above reviews;
     /// maintenance sinks to the bottom (low urgency).

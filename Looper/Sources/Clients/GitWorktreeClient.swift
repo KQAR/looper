@@ -9,6 +9,10 @@ struct GitWorktreeClient {
     /// (`git worktree remove` needs the repo). Only paths inside Looper's
     /// own `looper-worktrees` temp area are accepted.
     var removeWorktreeDirectory: @Sendable (_ worktreePath: String) async throws -> Void
+    /// Full patch of everything the run changed relative to the base branch
+    /// (committed + uncommitted + new files). Captured at run finish, before
+    /// worktree cleanup.
+    var captureDiff: @Sendable (_ projectPath: String, _ worktreePath: String) async throws -> String
     var writeTaskContext: @Sendable (_ worktreePath: String, _ task: LooperTask) async throws -> Void
     var pushBranch: @Sendable (_ worktreePath: String) async throws -> Void
     var createPullRequest: @Sendable (_ worktreePath: String, _ title: String, _ body: String) async throws -> String
@@ -38,6 +42,12 @@ extension GitWorktreeClient: DependencyKey {
         removeWorktreeDirectory: { worktreePath in
             try GitWorktreeIO.removeWorktreeDirectory(worktreePath: worktreePath)
         },
+        captureDiff: { projectPath, worktreePath in
+            try GitWorktreeIO.captureDiff(
+                projectPath: projectPath,
+                worktreePath: worktreePath
+            )
+        },
         writeTaskContext: { worktreePath, task in
             try GitWorktreeIO.writeTaskContext(
                 worktreePath: worktreePath,
@@ -60,6 +70,7 @@ extension GitWorktreeClient: DependencyKey {
         createWorktree: { _, _ in "/tmp/test-worktree" },
         removeWorktree: { _, _ in },
         removeWorktreeDirectory: { _ in },
+        captureDiff: { _, _ in "" },
         writeTaskContext: { _, _ in },
         pushBranch: { _ in },
         createPullRequest: { _, _, _ in "" }
@@ -107,6 +118,14 @@ private enum GitWorktreeIO {
             in: projectPath,
             args: ["worktree", "remove", "--force", worktreePath]
         )
+    }
+
+    static func captureDiff(projectPath: String, worktreePath: String) throws -> String {
+        // Register untracked files as intent-to-add so `git diff` shows their
+        // content; the worktree is disposable, so mutating its index is fine.
+        _ = try? runGit(in: worktreePath, args: ["add", "-N", "."])
+        let base = try detectDefaultBranch(projectPath: projectPath)
+        return try runGit(in: worktreePath, args: ["diff", base])
     }
 
     static func removeWorktreeDirectory(worktreePath: String) throws {

@@ -48,6 +48,7 @@ struct Run: Equatable, Identifiable, Sendable {
     var finishedAt: Date?
     var exitCode: Int32?
     var logPath: String
+    var diffPath: String?
     var costUSD: Double?
     var toolCallCount: Int?
     var currentActivity: String?
@@ -72,5 +73,23 @@ extension Run {
         copy.exitCode = exitCode
         copy.finishedAt = finishedAt
         return copy
+    }
+
+    /// Per-run artifact locations under the temp dir. The log carries the
+    /// agent's live output (the run terminal tails it); the diff is captured
+    /// at run finish, before worktree cleanup.
+    static func defaultLogPath(for runID: UUID) -> String {
+        artifactPath(for: runID, extension: "log")
+    }
+
+    static func defaultDiffPath(for runID: UUID) -> String {
+        artifactPath(for: runID, extension: "diff")
+    }
+
+    private static func artifactPath(for runID: UUID, extension ext: String) -> String {
+        URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("looper-runs", isDirectory: true)
+            .appendingPathComponent("\(runID.uuidString).\(ext)", isDirectory: false)
+            .path(percentEncoded: false)
     }
 }

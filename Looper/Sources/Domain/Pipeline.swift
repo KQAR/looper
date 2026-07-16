@@ -66,6 +66,23 @@ struct Pipeline: Equatable, Identifiable, Sendable {
         runAttachScript(executionPath: executionPath, resume: false)
     }
 
+    /// The run terminal is an observation window onto the SDK-driven agent
+    /// (the SDK is the only executor — never launch a second agent here).
+    /// It tails the run's live log; Ctrl-C drops into an interactive shell
+    /// in the worktree for forensics.
+    func runObservationScript(executionPath: String, logPath: String) -> String {
+        let escapedExecutionPath = executionPath.shellQuoted
+        let escapedLogPath = logPath.shellQuoted
+
+        let script = """
+        cd \(escapedExecutionPath) && \
+        touch \(escapedLogPath) && \
+        clear; tail -n +1 -F \(escapedLogPath); exec /bin/zsh -i
+        """
+
+        return "/bin/zsh -lc \(script.shellQuoted)"
+    }
+
     func runAttachScript(executionPath: String, resume: Bool) -> String {
         let escapedExecutionPath = executionPath.shellQuoted
         let baseCommand = agentCommand.trimmingCharacters(in: .whitespacesAndNewlines)

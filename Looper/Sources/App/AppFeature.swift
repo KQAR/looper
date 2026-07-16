@@ -8,6 +8,12 @@ enum AppSurface: String, Equatable, Sendable {
     case manage
 }
 
+/// A run's captured patch, loaded for the diff viewer sheet.
+struct PresentedDiff: Equatable, Sendable {
+    var taskTitle: String
+    var patch: String
+}
+
 @Reducer
 struct AppFeature {
     @Dependency(\.date.now) var now
@@ -68,6 +74,7 @@ struct AppFeature {
         /// bootstrap must not read as "everything is orphaned".
         var hasLoadedPipelines = false
         var hasLoadedTasks = false
+        var presentedDiff: PresentedDiff?
         var pipeline = PipelineFeature.State()
 
         init(
@@ -143,6 +150,7 @@ struct AppFeature {
         case saveSettingsButtonTapped
         case selectTaskProvider(TaskProviderKind)
         case refreshTasksButtonTapped
+        case runDiffCaptured(runID: UUID, diffPath: String)
         case runPersistenceFailed(RunFailure)
         case runResponse(Result<[Run], RunFailure>)
         case runEnvironmentCheckButtonTapped
@@ -157,6 +165,9 @@ struct AppFeature {
         case inboxApproveTapped(LooperTask.ID)
         case inboxCleanupCompleted(clearedWorktreeRunIDs: [UUID], deletedRunIDs: [UUID])
         case inboxCleanupTapped
+        case inboxViewDiffTapped(LooperTask.ID)
+        case inboxDiffLoaded(PresentedDiff?)
+        case inboxDiffDismissed
         case inboxSendBackConfirmed(taskID: LooperTask.ID, reason: String)
         case inboxRetryTapped(LooperTask.ID)
         case inboxRevealWorktreeTapped(path: String)
@@ -655,6 +666,39 @@ struct AppFeature {
                     await pipelineManagerClient.revealInFinder(path)
                 }
 
+            case let .runDiffCaptured(runID, diffPath):
+                guard var run = state.runs[id: runID] else { return .none }
+                run.diffPath = diffPath
+                state.runs[id: runID] = run
+                let updatedRun = run
+                return .run { [saveRun = runStoreClient.saveRun] _ in
+                    try? await saveRun(updatedRun)
+                }
+
+            case let .inboxViewDiffTapped(taskID):
+                guard let task = state.tasks[id: taskID],
+                      let diffPath = state.runs
+                      .filter({ $0.taskID == taskID })
+                      .max(by: { $0.startedAt < $1.startedAt })?
+                      .diffPath
+                else { return .none }
+                return .run { [title = task.title] send in
+                    let patch = (try? String(contentsOfFile: diffPath, encoding: .utf8)) ?? ""
+                    await send(
+                        .inboxDiffLoaded(
+                            patch.isEmpty ? nil : PresentedDiff(taskTitle: title, patch: patch)
+                        )
+                    )
+                }
+
+            case let .inboxDiffLoaded(diff):
+                state.presentedDiff = diff
+                return .none
+
+            case .inboxDiffDismissed:
+                state.presentedDiff = nil
+                return .none
+
             case .inboxCleanupTapped:
                 guard case let .maintenance(staleWorktreeRunIDs, orphanedRunIDs) =
                     state.inboxCards[id: "maintenance"]?.kind
@@ -1099,14 +1143,23 @@ extension AppFeature {
                 guard let pipeline = state.pipeline.pipelines[id: run.pipelineID] else {
                     return .none
                 }
-                return postRunGitEffect(
-                    run: finishedRun,
-                    task: task,
-                    projectPath: pipeline.projectPath,
-                    postRunAction: state.pipeline.preferences.postRunGitAction,
-                    pushBranch: gitWorktreeClient.pushBranch,
-                    createPullRequest: gitWorktreeClient.createPullRequest,
-                    removeWorktree: gitWorktreeClient.removeWorktree
+                // Capture the run's diff before any worktree cleanup can
+                // destroy the evidence — concatenate guarantees the order.
+                return .concatenate(
+                    captureRunDiffEffect(
+                        run: finishedRun,
+                        projectPath: pipeline.projectPath,
+                        captureDiff: gitWorktreeClient.captureDiff
+                    ),
+                    postRunGitEffect(
+                        run: finishedRun,
+                        task: task,
+                        projectPath: pipeline.projectPath,
+                        postRunAction: state.pipeline.preferences.postRunGitAction,
+                        pushBranch: gitWorktreeClient.pushBranch,
+                        createPullRequest: gitWorktreeClient.createPullRequest,
+                        removeWorktree: gitWorktreeClient.removeWorktree
+                    )
                 )
             }()
 
@@ -1140,6 +1193,32 @@ extension AppFeature {
                 updateTaskStatus(id: taskID, status: suggestedTaskStatus, state: &state)
             }
             return .merge(saveEffect, cleanupEffect)
+        }
+    }
+}
+
+private func captureRunDiffEffect(
+    run: Run,
+    projectPath: String,
+    captureDiff: @escaping @Sendable (String, String) async throws -> String
+) -> Effect<AppFeature.Action> {
+    guard let worktreePath = run.worktreePath else { return .none }
+    let runID = run.id
+    return .run { send in
+        guard let diff = try? await captureDiff(projectPath, worktreePath),
+              !diff.isEmpty
+        else { return }
+        let diffPath = Run.defaultDiffPath(for: runID)
+        let directory = (diffPath as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(
+            atPath: directory,
+            withIntermediateDirectories: true
+        )
+        do {
+            try diff.write(toFile: diffPath, atomically: true, encoding: .utf8)
+            await send(.runDiffCaptured(runID: runID, diffPath: diffPath))
+        } catch {
+            // Evidence capture is best-effort; the run outcome stands.
         }
     }
 }
@@ -1497,7 +1576,8 @@ private func startRunWithWorktreeEffect(
                 taskDescription: taskDescription,
                 agentCommand: agentCommand,
                 resumeSessionID: previousSessionID,
-                resolvedExecutablePath: resolvedAgentPath
+                resolvedExecutablePath: resolvedAgentPath,
+                logPath: run.logPath
             )
 
             let events = await executeAgent(request)
@@ -1521,10 +1601,7 @@ private func worktreeBranchName(taskID: String, runID: UUID) -> String {
 }
 
 private func logPath(for runID: UUID) -> String {
-    URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        .appendingPathComponent("looper-runs", isDirectory: true)
-        .appendingPathComponent("\(runID.uuidString).log", isDirectory: false)
-        .path(percentEncoded: false)
+    Run.defaultLogPath(for: runID)
 }
 
 private func writeTaskStatus(

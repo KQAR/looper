@@ -185,6 +185,15 @@ actor AppDatabase {
             }
         }
 
+        migrator.registerMigration("addRunDiffPath") { db in
+            let runCols = try Set(db.columns(in: RunRecord.databaseTableName).map(\.name))
+            if !runCols.contains("diffPath") {
+                try db.alter(table: RunRecord.databaseTableName) { table in
+                    table.add(column: "diffPath", .text)
+                }
+            }
+        }
+
         return migrator
     }
 }
