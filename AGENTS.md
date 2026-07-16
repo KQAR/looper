@@ -11,6 +11,10 @@ Looper is a personal macOS 26+ app for task-driven local AI development orchestr
 
 **Stack**: SwiftUI + TCA, Tuist, Swift 6, SPM, libghostty-spm, macOS 26+
 
+## Design System
+
+[`DESIGN.md`](DESIGN.md) is the single source of truth for all UI design and refactoring. It is derived from Apple's HIG (macOS 26, Liquid Glass) — **not** from existing code. When a current view conflicts with DESIGN.md, the view is wrong: refactor toward the spec, never propagate legacy styling. Read DESIGN.md before writing or reviewing any view code.
+
 ## Build Commands
 
 ```bash
@@ -140,7 +144,7 @@ surface.sendText("claude --task \"...\"\n")
 - **Side effects**: Always through TCA `Effect` — no async work in views.
 - **Testing**: `TestStore` with exhaustive state assertions.
 - **Naming**: Prefer provider-agnostic names (`TaskProvider`, `Pipeline`, `Run`). Do not introduce new `Workspace*` or `TaskBoard*` symbols.
-- **UI**: macOS 26 Liquid Glass style. Use system colors, dynamic type, `.glassEffect()`.
+- **UI**: follow [`DESIGN.md`](DESIGN.md) (macOS 26 Liquid Glass, semantic system colors, dynamic type, capsule controls). Never inline hex colors or fixed font sizes.
 - **Skills for code quality**: When writing/reviewing Swift code, read `~/.claude/skills/{swiftui,swiftdata,swift-concurrency,swift-testing}-pro/*/references/` — especially `api.md` first to avoid deprecated APIs. Also use `/swiftui-expert-skill` for Liquid Glass and macOS patterns.
 
 ### Project Structure
