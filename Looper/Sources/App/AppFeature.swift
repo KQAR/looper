@@ -1440,6 +1440,9 @@ private func startRunWithWorktreeEffect(
     state.runs.insert(run, at: 0)
 
     let agentCommand = pipeline.agentCommand
+    // The environment check's resolution of "claude" — lets bare-name agent
+    // commands launch even when the binary is outside the GUI process PATH.
+    let resolvedAgentPath = state.environmentReport?.claude.resolvedPath
 
     // Deliver queued steering notes with this run (boundary delivery,
     // INTERACTION.md level-1 intervention); consume them on delivery.
@@ -1493,7 +1496,8 @@ private func startRunWithWorktreeEffect(
                 workingDirectory: worktreePath,
                 taskDescription: taskDescription,
                 agentCommand: agentCommand,
-                resumeSessionID: previousSessionID
+                resumeSessionID: previousSessionID,
+                resolvedExecutablePath: resolvedAgentPath
             )
 
             let events = await executeAgent(request)

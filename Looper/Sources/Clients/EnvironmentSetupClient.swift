@@ -22,54 +22,43 @@ extension DependencyValues {
 extension EnvironmentSetupClient: DependencyKey {
     static let liveValue = Self(
         inspect: {
-            await withTaskGroup(of: EnvironmentToolStatus.self) { group in
-                group.addTask { inspectTool(name: "Git", command: "git") }
-                group.addTask { inspectTool(name: "Claude CLI", command: "claude") }
-                group.addTask { inspectTool(name: "tmux", command: "tmux") }
+            // Static resolution first (process PATH + well-known install
+            // dirs — no shell). Only names that miss trigger one batched
+            // interactive-login-shell lookup, which sees the PATH the
+            // user's terminal sees (see ExecutableResolver).
+            let tools = [
+                (name: "Git", command: "git"),
+                (name: "Claude CLI", command: "claude"),
+                (name: "tmux", command: "tmux"),
+            ]
 
-                var statuses: [String: EnvironmentToolStatus] = [:]
-                for await status in group {
-                    statuses[status.command] = status
+            var resolved: [String: String] = [:]
+            for tool in tools {
+                if let path = ExecutableResolver.resolveStatically(tool.command) {
+                    resolved[tool.command] = path
                 }
+            }
 
-                return EnvironmentSetupReport(
-                    git: statuses["git"] ?? .init(name: "Git", command: "git", isInstalled: false),
-                    claude: statuses["claude"] ?? .init(name: "Claude CLI", command: "claude", isInstalled: false),
-                    tmux: statuses["tmux"] ?? .init(name: "tmux", command: "tmux", isInstalled: false)
+            let missing = tools.map(\.command).filter { resolved[$0] == nil }
+            if !missing.isEmpty {
+                let shellResolved = await ExecutableResolver.resolveViaLoginShell(names: missing)
+                resolved.merge(shellResolved) { current, _ in current }
+            }
+
+            func status(_ name: String, _ command: String) -> EnvironmentToolStatus {
+                EnvironmentToolStatus(
+                    name: name,
+                    command: command,
+                    isInstalled: resolved[command] != nil,
+                    resolvedPath: resolved[command]
                 )
             }
+
+            return EnvironmentSetupReport(
+                git: status("Git", "git"),
+                claude: status("Claude CLI", "claude"),
+                tmux: status("tmux", "tmux")
+            )
         }
-    )
-}
-
-private func inspectTool(name: String, command: String) -> EnvironmentToolStatus {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-    process.arguments = ["-lc", "command -v \(command)"]
-
-    let stdout = Pipe()
-    process.standardOutput = stdout
-    process.standardError = Pipe()
-
-    do {
-        try process.run()
-        process.waitUntilExit()
-    } catch {
-        return EnvironmentToolStatus(
-            name: name,
-            command: command,
-            isInstalled: false,
-            resolvedPath: nil
-        )
-    }
-
-    let path = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-
-    return EnvironmentToolStatus(
-        name: name,
-        command: command,
-        isInstalled: process.terminationStatus == 0 && !path.isEmpty,
-        resolvedPath: path.isEmpty ? nil : path
     )
 }

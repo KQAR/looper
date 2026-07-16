@@ -11,7 +11,23 @@ struct AgentCommandConfiguration: Sendable {
     ) {
         let tokens = ShellWords.split(request.agentCommand)
         let executableToken = tokens.first
-        let executablePath = Self.resolveExecutablePath(from: executableToken, environment: environment)
+        var environment = environment
+        let executablePath = Self.resolveExecutablePath(
+            from: executableToken,
+            resolvedExecutablePath: request.resolvedExecutablePath,
+            environment: environment
+        )
+
+        // The resolved binary's directory joins PATH so the agent can spawn
+        // siblings installed alongside it (node, rg, …).
+        if let executablePath, executablePath.contains("/") {
+            let directory = (executablePath as NSString).deletingLastPathComponent
+            let currentPath = environment["PATH"] ?? ""
+            if !currentPath.split(separator: ":").map(String.init).contains(directory) {
+                environment["PATH"] = "\(directory):\(currentPath)"
+            }
+        }
+
         let parsed = ParsedArguments(
             tokens: Array(tokens.dropFirst()),
             resumeSessionID: request.resumeSessionID
@@ -28,44 +44,42 @@ struct AgentCommandConfiguration: Sendable {
 
     private static func resolveExecutablePath(
         from executableToken: String?,
+        resolvedExecutablePath: String?,
         environment: [String: String]
     ) -> String? {
-        guard let executableToken,
-              !executableToken.isEmpty,
-              executableToken != "claude"
-        else {
-            return nil
+        let token = executableToken ?? "claude"
+        guard !token.isEmpty else { return resolvedExecutablePath }
+
+        // A pinned path wins verbatim; never substitute a different binary.
+        if token.contains("/") {
+            return token
         }
 
-        if executableToken.contains("/") {
-            return executableToken
+        // A bare "claude" prefers the environment check's resolution — it
+        // may have come from the user's login shell PATH, which this GUI
+        // process cannot see.
+        if token == "claude", let resolvedExecutablePath {
+            return resolvedExecutablePath
         }
 
-        let searchPaths = (environment["PATH"] ?? "")
-            .split(separator: ":")
-            .map(String.init)
-            .filter { !$0.isEmpty }
-
-        for path in searchPaths {
-            let candidate = URL(fileURLWithPath: path, isDirectory: true)
-                .appendingPathComponent(executableToken, isDirectory: false)
-                .path(percentEncoded: false)
-            if FileManager.default.isExecutableFile(atPath: candidate) {
-                return candidate
-            }
+        if let resolved = ExecutableResolver.resolveStatically(
+            token,
+            path: environment["PATH"] ?? ExecutableResolver.augmentedPATH()
+        ) {
+            return resolved
         }
 
-        return executableToken
+        // Preserve legacy behavior: bare non-claude names fall through as-is
+        // (the SDK spawns them via env); bare "claude" returns nil so the
+        // SDK applies its own default resolution.
+        return token == "claude" ? nil : token
     }
 
     static func defaultEnvironment() -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
-        let extraPaths = ["/usr/local/bin", "/opt/homebrew/bin", "\(NSHomeDirectory())/.local/bin"]
-        let currentPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        let missingPaths = extraPaths.filter { !currentPath.contains($0) }
-        if !missingPaths.isEmpty {
-            environment["PATH"] = (missingPaths + [currentPath]).joined(separator: ":")
-        }
+        environment["PATH"] = ExecutableResolver.augmentedPATH(
+            base: environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        )
         return environment
     }
 }

@@ -25,6 +25,51 @@ final class AgentCommandConfigurationTests: XCTestCase {
         XCTAssertTrue(configuration.ignoredArguments.isEmpty)
     }
 
+    func testBareClaudePrefersEnvironmentCheckResolution() {
+        let request = AgentProcessRequest(
+            runID: UUID(),
+            workingDirectory: "/tmp/demo",
+            taskDescription: "Fix the bug",
+            agentCommand: "claude",
+            resumeSessionID: nil,
+            resolvedExecutablePath: "/Users/me/.local/bin/claude"
+        )
+
+        let configuration = AgentCommandConfiguration(
+            request: request,
+            environment: ["PATH": "/usr/bin:/bin"]
+        )
+
+        XCTAssertEqual(
+            configuration.options.pathToClaudeCodeExecutable,
+            "/Users/me/.local/bin/claude"
+        )
+        // The resolved binary's directory joins PATH so the agent can spawn
+        // siblings installed next to it.
+        XCTAssertEqual(
+            configuration.options.env?["PATH"],
+            "/Users/me/.local/bin:/usr/bin:/bin"
+        )
+    }
+
+    func testPinnedPathWinsOverEnvironmentCheckResolution() {
+        let request = AgentProcessRequest(
+            runID: UUID(),
+            workingDirectory: "/tmp/demo",
+            taskDescription: "Fix the bug",
+            agentCommand: "/opt/pinned/claude --model opus",
+            resumeSessionID: nil,
+            resolvedExecutablePath: "/Users/me/.local/bin/claude"
+        )
+
+        let configuration = AgentCommandConfiguration(
+            request: request,
+            environment: ["PATH": "/usr/bin:/bin"]
+        )
+
+        XCTAssertEqual(configuration.options.pathToClaudeCodeExecutable, "/opt/pinned/claude")
+    }
+
     func testParsesCommonFlagsAndPreservesUnknownLongFlags() {
         let request = AgentProcessRequest(
             runID: UUID(),

@@ -10,6 +10,10 @@ struct AgentProcessRequest: Sendable, Equatable {
     var taskDescription: String
     var agentCommand: String
     var resumeSessionID: String?
+    /// Absolute path for the agent binary from the environment check
+    /// (ExecutableResolver) — lets a bare "claude" command launch even when
+    /// the binary lives outside the GUI process PATH.
+    var resolvedExecutablePath: String?
 }
 
 @DependencyClient
