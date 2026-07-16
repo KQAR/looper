@@ -39,6 +39,14 @@ extension AppFeature.State {
         }
 
         for task in tasks {
+            // Cards exist only for tasks routed to an existing pipeline.
+            // A task whose pipeline was deleted is stranded: it must not
+            // offer loop decisions (retry would silently resurrect the
+            // pipeline). Stranded tasks stay reachable on the Manage surface.
+            guard let pipelineName = pipelineName(for: task, in: pipeline.pipelines) else {
+                continue
+            }
+
             switch task.status {
             case .inReview:
                 cards.append(
@@ -47,7 +55,7 @@ extension AppFeature.State {
                         kind: .reviewRequest(taskID: task.id),
                         title: task.title,
                         detail: String(localized: "inbox.card.review.detail", bundle: .localized),
-                        pipelineName: pipelineName(for: task, in: pipeline.pipelines)
+                        pipelineName: pipelineName
                     )
                 )
 
@@ -67,7 +75,7 @@ extension AppFeature.State {
                         ),
                         title: task.title,
                         detail: String(localized: "inbox.card.failure.detail", bundle: .localized),
-                        pipelineName: pipelineName(for: task, in: pipeline.pipelines),
+                        pipelineName: pipelineName,
                         occurredAt: latestRun.finishedAt
                     )
                 )
@@ -135,7 +143,13 @@ extension AppFeature.State {
             guard case .failureEscalation = card.kind else { return nil }
             return card.taskID
         })
-        return tasks.count { $0.status == .todo && !failureTaskIDs.contains($0.id) }
+        // Stranded tasks (no matching pipeline) cannot start, so they are
+        // not "queued" — counting them would promise runs that never come.
+        return tasks.count {
+            $0.status == .todo
+                && !failureTaskIDs.contains($0.id)
+                && pipelineName(for: $0, in: pipeline.pipelines) != nil
+        }
     }
 
     var inboxEmptyContext: InboxEmptyContext {

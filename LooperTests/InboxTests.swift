@@ -6,10 +6,22 @@ import XCTest
 
 @MainActor
 final class InboxTests: XCTestCase {
+    private static func demoPipeline() -> Pipeline {
+        Pipeline(
+            id: UUID(uuidString: "1C40F2D4-2350-4CD5-AB54-90713D865FE0")!,
+            name: "demo",
+            projectPath: "/tmp/demo",
+            executionPath: "/tmp/demo",
+            agentCommand: "claude",
+            tmuxSessionName: "demo"
+        )
+    }
+
     // MARK: - Card derivation (pure state)
 
     func testReviewRequestCardDerivesFromInReviewTask() {
         var state = AppFeature.State()
+        state.pipeline.pipelines = [Self.demoPipeline()]
         state.tasks = [
             LooperTask(
                 id: "task-1",
@@ -25,6 +37,40 @@ final class InboxTests: XCTestCase {
         XCTAssertEqual(cards.count, 1)
         XCTAssertEqual(cards.first?.id, "review-task-1")
         XCTAssertEqual(cards.first?.kind, .reviewRequest(taskID: "task-1"))
+    }
+
+    func testStrandedTaskProducesNoCardsAndIsExcludedFromBacklog() {
+        // Tasks whose pipeline was deleted are stranded: no cards, no
+        // backlog promise. They stay reachable on the Manage surface.
+        var state = AppFeature.State()
+        state.tasks = [
+            LooperTask(
+                id: "task-1",
+                title: "Stranded review",
+                summary: "Summary",
+                status: .inReview,
+                source: "Local",
+                repoPath: URL(filePath: "/tmp/deleted-project")
+            ),
+            LooperTask(
+                id: "task-2",
+                title: "Stranded todo",
+                summary: "Summary",
+                status: .todo,
+                source: "Local",
+                repoPath: URL(filePath: "/tmp/deleted-project")
+            ),
+        ]
+
+        XCTAssertTrue(state.inboxCards.isEmpty)
+        XCTAssertEqual(state.inboxBacklogCount, 0)
+
+        // The same tasks routed to an existing pipeline produce cards again.
+        state.pipeline.pipelines = [Self.demoPipeline()]
+        state.tasks[id: "task-1"]?.repoPath = URL(filePath: "/tmp/demo")
+        state.tasks[id: "task-2"]?.repoPath = URL(filePath: "/tmp/demo")
+        XCTAssertEqual(state.inboxCards.first?.id, "review-task-1")
+        XCTAssertEqual(state.inboxBacklogCount, 1)
     }
 
     func testFailureCardDerivesFromLatestFailedRunWithoutActiveRetry() {
@@ -43,6 +89,7 @@ final class InboxTests: XCTestCase {
         )
 
         var state = AppFeature.State()
+        state.pipeline.pipelines = [Self.demoPipeline()]
         state.tasks = [
             LooperTask(
                 id: "task-1",
@@ -75,6 +122,7 @@ final class InboxTests: XCTestCase {
 
     func testSystemCardsFloatAboveRunCards() {
         var state = AppFeature.State()
+        state.pipeline.pipelines = [Self.demoPipeline()]
         state.environmentReport = EnvironmentSetupReport(
             git: .init(name: "Git", command: "git", isInstalled: true, resolvedPath: "/usr/bin/git"),
             claude: .init(name: "Claude CLI", command: "claude", isInstalled: false),
@@ -87,7 +135,7 @@ final class InboxTests: XCTestCase {
                 summary: "Summary",
                 status: .inReview,
                 source: "Local",
-                repoPath: nil
+                repoPath: URL(filePath: "/tmp/demo")
             ),
         ]
 
@@ -312,13 +360,22 @@ final class CleanupTests: XCTestCase {
             status: .failed,
             worktreePath: "/tmp/looper-worktrees/demo/run-2"
         )
+        let inProgressTask = LooperTask(
+            id: "task-1",
+            title: "In flight",
+            summary: "Summary",
+            status: .inProgress,
+            source: "Local",
+            repoPath: URL(filePath: "/tmp/demo")
+        )
 
         let cancelled = CleanupRecorder()
         let removedSessions = CleanupRecorder()
         let removedWorktrees = CleanupRecorder()
         let deletedRuns = CleanupRecorder()
+        let statusRecorder = TaskStatusRecorder()
 
-        var initialState = AppFeature.State(runs: [activeRun, failedRun])
+        var initialState = AppFeature.State(tasks: [inProgressTask], runs: [activeRun, failedRun])
         initialState.pipeline.pipelines = [pipeline]
         initialState.pipeline.selectedPipelineID = pipeline.id
 
@@ -338,11 +395,19 @@ final class CleanupTests: XCTestCase {
             $0.runStoreClient.deleteRuns = { ids in
                 for id in ids { await deletedRuns.record(id.uuidString) }
             }
+            $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
+                await statusRecorder.record(taskID, status)
+            }
             $0.appPreferencesClient.savePreferences = { _ in }
         }
 
         await store.send(.pipeline(.removePipelineButtonTapped(pipeline.id))) {
             $0.pipeline.removingPipelineIDs = [pipeline.id]
+            $0.updatingTaskIDs = [inProgressTask.id]
+        }
+        await store.receive(\.taskStatusUpdateResponse.success) {
+            $0.updatingTaskIDs = []
+            $0.tasks[id: inProgressTask.id]?.status = .todo
         }
         await store.receive(\.pipeline.removePipelineResponse) {
             $0.pipeline.removingPipelineIDs = []
@@ -352,6 +417,11 @@ final class CleanupTests: XCTestCase {
             $0.runs = []
         }
         await store.finish()
+
+        let statusEvents = await statusRecorder.value()
+        XCTAssertEqual(statusEvents.count, 1)
+        XCTAssertEqual(statusEvents.first?.0, inProgressTask.id)
+        XCTAssertEqual(statusEvents.first?.1, .todo)
 
         let cancelledIDs = await cancelled.values()
         XCTAssertEqual(cancelledIDs, [activeRun.id.uuidString])
@@ -370,6 +440,59 @@ final class CleanupTests: XCTestCase {
             Set(deleted),
             [activeRun.id.uuidString, failedRun.id.uuidString]
         )
+    }
+
+    func testRetryOnStrandedTaskDoesNotRecreatePipeline() async {
+        // Regression: retry on a task whose pipeline was deleted used to
+        // fall through to the auto-create fallback and resurrect it.
+        let strandedTask = LooperTask(
+            id: "task-1",
+            title: "Stranded",
+            summary: "Summary",
+            status: .todo,
+            source: "Local",
+            repoPath: URL(filePath: "/tmp/deleted-project")
+        )
+
+        let store = TestStore(initialState: AppFeature.State(tasks: [strandedTask])) {
+            AppFeature()
+        }
+
+        // No state change, no startSelectedTaskButtonTapped, no pipeline creation.
+        await store.send(.inboxRetryTapped(strandedTask.id))
+    }
+
+    func testAgentResultDuringPipelineRemovalDoesNotResurrectRun() async {
+        let pipeline = Self.makePipeline()
+        let activeRun = Self.makeRun(
+            id: "AAAA0000-0000-0000-0000-000000000001",
+            status: .running,
+            worktreePath: "/tmp/looper-worktrees/demo/run-1"
+        )
+
+        var initialState = AppFeature.State(runs: [activeRun])
+        initialState.pipeline.pipelines = [pipeline]
+        initialState.pipeline.removingPipelineIDs = [pipeline.id]
+
+        let store = TestStore(initialState: initialState) {
+            AppFeature()
+        } withDependencies: {
+            $0.runStoreClient.saveRun = { _ in
+                XCTFail("A run of a pipeline being removed must not be saved")
+            }
+        }
+
+        let result = AgentResult(
+            sessionID: "",
+            isError: true,
+            durationMs: 0,
+            costUSD: 0,
+            numTurns: 0,
+            resultText: "Agent was cancelled"
+        )
+        await store.send(.agentEventReceived(runID: activeRun.id, .result(result))) {
+            $0.runs = []
+        }
     }
 
     func testMarkDoneDropsNotesAndClearsWorktreePaths() async {

@@ -640,6 +640,13 @@ struct AppFeature {
                 return .send(.returnSelectedTaskToTodoButtonTapped)
 
             case let .inboxRetryTapped(taskID):
+                // Retry never resurrects a deleted pipeline: it only runs for
+                // tasks still routed to an existing one (the auto-create
+                // fallback in startSelectedTaskButtonTapped stays reserved
+                // for explicit starts on the Manage surface).
+                guard let task = state.tasks[id: taskID],
+                      pipelineID(for: task, in: state.pipeline.pipelines) != nil
+                else { return .none }
                 state.selectedTaskID = taskID
                 return .send(.startSelectedTaskButtonTapped)
 
@@ -898,24 +905,53 @@ struct AppFeature {
                 // agent processes, run terminal sessions, worktrees on disk.
                 guard let pipeline = state.pipeline.pipelines[id: id] else { return .none }
                 let pipelineRuns = state.runs.filter { $0.pipelineID == id }
-                guard !pipelineRuns.isEmpty else { return .none }
 
-                return .run { [
-                    cancelAgent = agentProcessClient.cancel,
-                    removeRunSession = pipelineTerminalClient.removeRunSession,
-                    removeWorktree = gitWorktreeClient.removeWorktree,
-                    projectPath = pipeline.projectPath
-                ] _ in
-                    for run in pipelineRuns {
-                        if run.isActive {
-                            await cancelAgent(run.id)
+                var effects: [Effect<Action>] = []
+
+                // Its in-flight tasks would be stuck inProgress once their
+                // agents are cancelled — return them to todo now.
+                if state.pipeline.preferences.taskProviderConfiguration.canFetchTasks {
+                    let inProgressTaskIDs = state.tasks
+                        .filter {
+                            $0.status == .inProgress
+                                && pipelineID(for: $0, in: state.pipeline.pipelines) == id
                         }
-                        await removeRunSession(run.id)
-                        if let worktreePath = run.worktreePath {
-                            try? await removeWorktree(projectPath, worktreePath)
-                        }
+                        .map(\.id)
+                    for taskID in inProgressTaskIDs {
+                        effects.append(
+                            writeTaskStatus(
+                                taskID: taskID,
+                                status: .todo,
+                                configuration: state.pipeline.preferences.taskProviderConfiguration,
+                                state: &state,
+                                updateStatus: taskProviderClient.updateTaskStatus
+                            )
+                        )
                     }
                 }
+
+                if !pipelineRuns.isEmpty {
+                    effects.append(
+                        .run { [
+                            cancelAgent = agentProcessClient.cancel,
+                            removeRunSession = pipelineTerminalClient.removeRunSession,
+                            removeWorktree = gitWorktreeClient.removeWorktree,
+                            projectPath = pipeline.projectPath
+                        ] _ in
+                            for run in pipelineRuns {
+                                if run.isActive {
+                                    await cancelAgent(run.id)
+                                }
+                                await removeRunSession(run.id)
+                                if let worktreePath = run.worktreePath {
+                                    try? await removeWorktree(projectPath, worktreePath)
+                                }
+                            }
+                        }
+                    )
+                }
+
+                return effects.isEmpty ? .none : .merge(effects)
 
             case let .pipeline(.selectPipeline(id)):
                 guard let id else {
@@ -1013,6 +1049,14 @@ extension AppFeature {
             return .none
 
         case let .result(agentResult):
+            // A cancellation triggered by pipeline deletion must not write
+            // the run back to the DB — its record is being deleted, and a
+            // late save would resurrect it as an orphan.
+            if state.pipeline.removingPipelineIDs.contains(run.pipelineID) {
+                state.runs.remove(id: runID)
+                return .none
+            }
+
             run.sessionID = agentResult.sessionID.isEmpty ? run.sessionID : agentResult.sessionID
             run.costUSD = agentResult.costUSD
             run.currentActivity = nil
