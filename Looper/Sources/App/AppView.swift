@@ -14,40 +14,21 @@ struct AppView: View {
     private let lang = AppLanguageManager.shared
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            pipelineSidebar
-                .navigationSplitViewColumnWidth(min: 260, ideal: 310, max: 360)
-        } detail: {
-            workspace
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(workspaceBackground)
+        Group {
+            switch store.activeSurface {
+            case .inbox:
+                inboxSurface
+            case .manage:
+                manageSurface
+            }
         }
-        .navigationSplitViewStyle(.prominentDetail)
-        .animation(.smooth(duration: 0.32, extraBounce: 0), value: columnVisibility)
         .background(WindowChromeConfigurator())
         .toolbar {
-            if !toolbarTitle.isEmpty {
-                ToolbarItem(placement: .principal) {
-                    Text(toolbarTitle)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                .sharedBackgroundVisibility(.hidden)
-            }
-
-            if hasPipelines {
-                ToolbarItem(placement: .primaryAction) {
-                    refreshTasksToolbarButton
-                }
-            }
-
-            if canCreateLocalTask {
-                ToolbarItem(placement: .primaryAction) {
-                    addTaskToolbarButton
-                }
+            ToolbarItem(placement: .navigation) {
+                surfacePicker
             }
         }
+        .background { surfaceKeyboardShortcuts }
         .sheet(
             isPresented: Binding(
                 get: { store.isSettingsPresented },
@@ -127,6 +108,71 @@ struct AppView: View {
         .onChange(of: store.selectedTaskID) {
             selectedDetailTab = .console
         }
+    }
+
+    // MARK: - Surfaces
+
+    private var inboxSurface: some View {
+        InboxView(store: store)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var manageSurface: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            pipelineSidebar
+                .navigationSplitViewColumnWidth(min: 260, ideal: 310, max: 360)
+        } detail: {
+            workspace
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(workspaceBackground)
+        }
+        .navigationSplitViewStyle(.prominentDetail)
+        .animation(.smooth(duration: 0.32, extraBounce: 0), value: columnVisibility)
+        .toolbar {
+            if !toolbarTitle.isEmpty {
+                ToolbarItem(placement: .principal) {
+                    Text(toolbarTitle)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .sharedBackgroundVisibility(.hidden)
+            }
+
+            if hasPipelines {
+                ToolbarItem(placement: .primaryAction) {
+                    refreshTasksToolbarButton
+                }
+            }
+
+            if canCreateLocalTask {
+                ToolbarItem(placement: .primaryAction) {
+                    addTaskToolbarButton
+                }
+            }
+        }
+    }
+
+    private var surfacePicker: some View {
+        Picker(String(localized: "surface.picker", bundle: lang.bundle), selection: $store.activeSurface) {
+            Text("surface.inbox", bundle: lang.bundle)
+                .tag(AppSurface.inbox)
+            Text("surface.manage", bundle: lang.bundle)
+                .tag(AppSurface.manage)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+    }
+
+    /// ⌘1 / ⌘3 surface switching per INTERACTION.md (⌘2 is reserved for Live Wall).
+    private var surfaceKeyboardShortcuts: some View {
+        Group {
+            Button("") { store.activeSurface = .inbox }
+                .keyboardShortcut("1", modifiers: .command)
+            Button("") { store.activeSurface = .manage }
+                .keyboardShortcut("3", modifiers: .command)
+        }
+        .hidden()
     }
 
     // MARK: - Sidebar

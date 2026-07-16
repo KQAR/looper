@@ -1,10 +1,18 @@
 import ComposableArchitecture
 import Foundation
 
+/// Top-level surfaces per INTERACTION.md: Inbox is the default landing,
+/// Manage is the legacy sidebar + list + detail layout. (Live Wall comes with M3.)
+enum AppSurface: String, Equatable, Sendable {
+    case inbox
+    case manage
+}
+
 @Reducer
 struct AppFeature {
     @Dependency(\.date.now) var now
     @Dependency(\.environmentSetupClient) var environmentSetupClient
+    @Dependency(\.pipelineManagerClient) var pipelineManagerClient
     @Dependency(\.runStoreClient) var runStoreClient
     @Dependency(\.taskProviderClient) var taskProviderClient
     @Dependency(\.pipelineTerminalClient) var pipelineTerminalClient
@@ -53,6 +61,8 @@ struct AppFeature {
         var isLocalTaskComposerPresented = false
         var isCreatingLocalTask = false
         var pipelinePendingDeletionID: Pipeline.ID?
+        var activeSurface: AppSurface = .inbox
+        var pendingSteeringNotes: [LooperTask.ID: [SteeringNote]] = [:]
         var pipeline = PipelineFeature.State()
 
         init(
@@ -73,6 +83,8 @@ struct AppFeature {
             isLocalTaskComposerPresented: Bool = false,
             isCreatingLocalTask: Bool = false,
             pipelinePendingDeletionID: Pipeline.ID? = nil,
+            activeSurface: AppSurface = .inbox,
+            pendingSteeringNotes: [LooperTask.ID: [SteeringNote]] = [:],
             pipeline: PipelineFeature.State = PipelineFeature.State()
         ) {
             self.tasks = tasks
@@ -92,6 +104,8 @@ struct AppFeature {
             self.isLocalTaskComposerPresented = isLocalTaskComposerPresented
             self.isCreatingLocalTask = isCreatingLocalTask
             self.pipelinePendingDeletionID = pipelinePendingDeletionID
+            self.activeSurface = activeSurface
+            self.pendingSteeringNotes = pendingSteeringNotes
             self.pipeline = pipeline
         }
     }
@@ -130,6 +144,10 @@ struct AppFeature {
         case taskResponse(Result<[LooperTask], TaskProviderFailure>)
         case taskStatusUpdateResponse(Result<TaskStatusUpdate, TaskStatusFailure>)
         case terminalEventReceived(PipelineTerminalEvent)
+        case inboxApproveTapped(LooperTask.ID)
+        case inboxSendBackConfirmed(taskID: LooperTask.ID, reason: String)
+        case inboxRetryTapped(LooperTask.ID)
+        case inboxRevealWorktreeTapped(path: String)
         case pipeline(PipelineFeature.Action)
     }
 
@@ -170,6 +188,10 @@ struct AppFeature {
             case .onAppear:
                 return .merge(
                     .send(.pipeline(.onAppear)),
+                    .run { send in
+                        let report = await environmentSetupClient.inspect()
+                        await send(.environmentCheckResponse(report))
+                    },
                     .run { send in
                         let events = await pipelineTerminalClient.events()
                         for await event in events {
@@ -574,6 +596,36 @@ struct AppFeature {
                     state: &state,
                     updateStatus: taskProviderClient.updateTaskStatus
                 )
+
+            case let .inboxApproveTapped(taskID):
+                state.selectedTaskID = taskID
+                return .send(.markSelectedTaskDoneButtonTapped)
+
+            case let .inboxSendBackConfirmed(taskID, reason):
+                let trimmedReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmedReason.isEmpty else { return .none }
+                state.selectedTaskID = taskID
+                // The mandatory reason becomes machine-consumable context:
+                // it is delivered to the retry run as a steering note.
+                state.pendingSteeringNotes[taskID, default: []].append(
+                    SteeringNote(
+                        id: uuid(),
+                        taskID: taskID,
+                        text: trimmedReason,
+                        origin: .sendBackReason,
+                        createdAt: now
+                    )
+                )
+                return .send(.returnSelectedTaskToTodoButtonTapped)
+
+            case let .inboxRetryTapped(taskID):
+                state.selectedTaskID = taskID
+                return .send(.startSelectedTaskButtonTapped)
+
+            case let .inboxRevealWorktreeTapped(path):
+                return .run { _ in
+                    await pipelineManagerClient.revealInFinder(path)
+                }
 
             case let .pipeline(.createPipelineResponse(.success(pipeline))):
                 defer { state.pendingRunTaskID = nil }
@@ -1206,6 +1258,20 @@ private func startRunWithWorktreeEffect(
     state.runs.insert(run, at: 0)
 
     let agentCommand = pipeline.agentCommand
+
+    // Deliver queued steering notes with this run (boundary delivery,
+    // INTERACTION.md level-1 intervention); consume them on delivery.
+    let steeringNotes = state.pendingSteeringNotes[task.id] ?? []
+    state.pendingSteeringNotes[task.id] = nil
+
+    let steeringNotesSection = steeringNotes.isEmpty ? "" : """
+    \n
+    ## Steering Notes from the owner
+
+    Honor these before anything else:
+
+    \(steeringNotes.map { "- \($0.text)" }.joined(separator: "\n"))
+    """
     let taskDescription = """
     # Task Context
 
@@ -1216,7 +1282,7 @@ private func startRunWithWorktreeEffect(
     ## Description
 
     \(task.summary)
-    """
+    """ + steeringNotesSection
 
     return .run { send in
         do {

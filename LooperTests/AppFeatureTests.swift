@@ -27,6 +27,12 @@ actor TaskStatusRecorder {
     }
 }
 
+let readyEnvironmentReport = EnvironmentSetupReport(
+    git: .init(name: "Git", command: "git", isInstalled: true, resolvedPath: "/usr/bin/git"),
+    claude: .init(name: "Claude CLI", command: "claude", isInstalled: true, resolvedPath: "/usr/local/bin/claude"),
+    tmux: .init(name: "tmux", command: "tmux", isInstalled: true, resolvedPath: "/opt/homebrew/bin/tmux")
+)
+
 @MainActor
 final class AppFeatureTests: XCTestCase {
     func testInitialStateHasNoTasksOrPipelines() async {
@@ -47,6 +53,7 @@ final class AppFeatureTests: XCTestCase {
         } withDependencies: {
             $0.pipelineStoreClient.fetchPipelines = { [] }
             $0.appPreferencesClient.fetchPreferences = { .init() }
+            $0.environmentSetupClient.inspect = { readyEnvironmentReport }
             $0.pipelineTerminalClient.events = {
                 AsyncStream { continuation in
                     continuation.finish()
@@ -56,6 +63,9 @@ final class AppFeatureTests: XCTestCase {
 
         await store.send(.onAppear)
         await store.receive(\.pipeline.onAppear)
+        await store.receive(\.environmentCheckResponse) {
+            $0.environmentReport = readyEnvironmentReport
+        }
         await store.receive(\.pipeline.bootstrapResponse.success)
         await store.receive(\.loadRuns)
         await store.receive(\.refreshTasksButtonTapped) {
@@ -104,6 +114,7 @@ final class AppFeatureTests: XCTestCase {
                     hasCompletedOnboarding: true
                 )
             }
+            $0.environmentSetupClient.inspect = { readyEnvironmentReport }
             $0.pipelineTerminalClient.events = {
                 AsyncStream { continuation in
                     continuation.finish()
@@ -113,6 +124,9 @@ final class AppFeatureTests: XCTestCase {
 
         await store.send(.onAppear)
         await store.receive(\.pipeline.onAppear)
+        await store.receive(\.environmentCheckResponse) {
+            $0.environmentReport = readyEnvironmentReport
+        }
         await store.receive(\.pipeline.bootstrapResponse.success) {
             $0.pipeline.preferences = AppPreferences(
                 taskProviderConfiguration: providerConfiguration,
@@ -182,6 +196,7 @@ final class AppFeatureTests: XCTestCase {
             $0.taskProviderClient.updateTaskStatus = { taskID, status, _ in
                 await recorder.record(taskID, status)
             }
+            $0.environmentSetupClient.inspect = { readyEnvironmentReport }
             $0.pipelineTerminalClient.events = {
                 AsyncStream { continuation in
                     continuation.finish()
@@ -195,6 +210,9 @@ final class AppFeatureTests: XCTestCase {
 
         await store.send(.onAppear)
         await store.receive(\.pipeline.onAppear)
+        await store.receive(\.environmentCheckResponse) {
+            $0.environmentReport = readyEnvironmentReport
+        }
         await store.receive(\.pipeline.bootstrapResponse.success) {
             $0.pipeline.pipelines = [pipeline]
             $0.pipeline.selectedPipelineID = pipeline.id
