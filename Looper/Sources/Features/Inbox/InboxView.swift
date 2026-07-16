@@ -11,6 +11,7 @@ struct InboxView: View {
     @State private var selectedCardID: InboxCard.ID?
     @State private var sendBackCardID: InboxCard.ID?
     @State private var sendBackReason = ""
+    @State private var isConfirmingCleanup = false
     @FocusState private var isReasonFieldFocused: Bool
 
     private let lang = AppLanguageManager.shared
@@ -38,6 +39,24 @@ struct InboxView: View {
         }
         .onAppear {
             selectedCardID = store.inboxCards.first?.id
+        }
+        .confirmationDialog(
+            String(localized: "inbox.cleanup.confirm.title", bundle: lang.bundle),
+            isPresented: $isConfirmingCleanup,
+            titleVisibility: .visible
+        ) {
+            Button(
+                String(localized: "inbox.cleanup.confirm.action", bundle: lang.bundle),
+                role: .destructive
+            ) {
+                store.send(.inboxCleanupTapped)
+            }
+            Button(
+                String(localized: "inbox.sendBack.cancel", bundle: lang.bundle),
+                role: .cancel
+            ) {}
+        } message: {
+            Text("inbox.cleanup.confirm.message", bundle: lang.bundle)
         }
     }
 
@@ -130,6 +149,7 @@ struct InboxView: View {
         case .system: "wrench.and.screwdriver.fill"
         case .reviewRequest: "eye.circle.fill"
         case .failureEscalation: "xmark.circle.fill"
+        case .maintenance: "trash.circle.fill"
         }
     }
 
@@ -137,6 +157,7 @@ struct InboxView: View {
         switch card.kind {
         case .system, .failureEscalation: .red
         case .reviewRequest: .orange
+        case .maintenance: Color(.systemGray)
         }
     }
 
@@ -185,6 +206,14 @@ struct InboxView: View {
                     }
                     .buttonStyle(.glass)
                 }
+
+            case .maintenance:
+                Button(role: .destructive) {
+                    isConfirmingCleanup = true
+                } label: {
+                    Text("inbox.action.cleanup", bundle: lang.bundle)
+                }
+                .buttonStyle(.glass)
             }
         }
         .controlSize(.small)
@@ -251,6 +280,10 @@ struct InboxView: View {
             store.send(.inboxApproveTapped(taskID))
         case let .failureEscalation(taskID, _, _):
             store.send(.inboxRetryTapped(taskID))
+        case .maintenance:
+            // Destructive — never on Enter; requires the explicit
+            // button + confirmation dialog.
+            break
         }
     }
 

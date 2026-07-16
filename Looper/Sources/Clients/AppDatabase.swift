@@ -47,6 +47,13 @@ actor AppDatabase {
         }
     }
 
+    func deleteRuns(ids: [UUID]) throws {
+        guard !ids.isEmpty else { return }
+        try databaseQueue.write { db in
+            _ = try RunRecord.deleteAll(db, keys: ids.map(\.uuidString))
+        }
+    }
+
     static func makeLive() -> AppDatabase {
         do {
             return try AppDatabase(path: defaultDatabasePath())

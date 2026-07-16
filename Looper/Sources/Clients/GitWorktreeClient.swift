@@ -5,6 +5,10 @@ import Foundation
 struct GitWorktreeClient {
     var createWorktree: @Sendable (_ projectPath: String, _ branchName: String) async throws -> String
     var removeWorktree: @Sendable (_ projectPath: String, _ worktreePath: String) async throws -> Void
+    /// Deletes an orphaned worktree directory whose parent repo is gone
+    /// (`git worktree remove` needs the repo). Only paths inside Looper's
+    /// own `looper-worktrees` temp area are accepted.
+    var removeWorktreeDirectory: @Sendable (_ worktreePath: String) async throws -> Void
     var writeTaskContext: @Sendable (_ worktreePath: String, _ task: LooperTask) async throws -> Void
     var pushBranch: @Sendable (_ worktreePath: String) async throws -> Void
     var createPullRequest: @Sendable (_ worktreePath: String, _ title: String, _ body: String) async throws -> String
@@ -31,6 +35,9 @@ extension GitWorktreeClient: DependencyKey {
                 worktreePath: worktreePath
             )
         },
+        removeWorktreeDirectory: { worktreePath in
+            try GitWorktreeIO.removeWorktreeDirectory(worktreePath: worktreePath)
+        },
         writeTaskContext: { worktreePath, task in
             try GitWorktreeIO.writeTaskContext(
                 worktreePath: worktreePath,
@@ -52,6 +59,7 @@ extension GitWorktreeClient: DependencyKey {
     static let testValue = GitWorktreeClient(
         createWorktree: { _, _ in "/tmp/test-worktree" },
         removeWorktree: { _, _ in },
+        removeWorktreeDirectory: { _ in },
         writeTaskContext: { _, _ in },
         pushBranch: { _ in },
         createPullRequest: { _, _, _ in "" }
@@ -99,6 +107,21 @@ private enum GitWorktreeIO {
             in: projectPath,
             args: ["worktree", "remove", "--force", worktreePath]
         )
+    }
+
+    static func removeWorktreeDirectory(worktreePath: String) throws {
+        let standardized = (worktreePath as NSString).standardizingPath
+        guard standardized.contains("/looper-worktrees/") else {
+            throw NSError(
+                domain: "GitWorktreeIO",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Refusing to delete a directory outside looper-worktrees: \(worktreePath)",
+                ]
+            )
+        }
+        try FileManager.default.removeItem(atPath: standardized)
     }
 
     static func writeTaskContext(

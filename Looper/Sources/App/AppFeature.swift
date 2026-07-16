@@ -63,6 +63,11 @@ struct AppFeature {
         var pipelinePendingDeletionID: Pipeline.ID?
         var activeSurface: AppSurface = .inbox
         var pendingSteeringNotes: [LooperTask.ID: [SteeringNote]] = [:]
+        /// Orphan detection (maintenance card) stays silent until both
+        /// pipelines and tasks have actually loaded — an empty list before
+        /// bootstrap must not read as "everything is orphaned".
+        var hasLoadedPipelines = false
+        var hasLoadedTasks = false
         var pipeline = PipelineFeature.State()
 
         init(
@@ -85,6 +90,8 @@ struct AppFeature {
             pipelinePendingDeletionID: Pipeline.ID? = nil,
             activeSurface: AppSurface = .inbox,
             pendingSteeringNotes: [LooperTask.ID: [SteeringNote]] = [:],
+            hasLoadedPipelines: Bool = false,
+            hasLoadedTasks: Bool = false,
             pipeline: PipelineFeature.State = PipelineFeature.State()
         ) {
             self.tasks = tasks
@@ -106,6 +113,8 @@ struct AppFeature {
             self.pipelinePendingDeletionID = pipelinePendingDeletionID
             self.activeSurface = activeSurface
             self.pendingSteeringNotes = pendingSteeringNotes
+            self.hasLoadedPipelines = hasLoadedPipelines
+            self.hasLoadedTasks = hasLoadedTasks
             self.pipeline = pipeline
         }
     }
@@ -143,8 +152,11 @@ struct AppFeature {
         case taskProviderInspectionResponse(Result<TaskProviderInspection, TaskProviderFailure>)
         case taskResponse(Result<[LooperTask], TaskProviderFailure>)
         case taskStatusUpdateResponse(Result<TaskStatusUpdate, TaskStatusFailure>)
+        case taskWorktreesCleaned(LooperTask.ID)
         case terminalEventReceived(PipelineTerminalEvent)
         case inboxApproveTapped(LooperTask.ID)
+        case inboxCleanupCompleted(clearedWorktreeRunIDs: [UUID], deletedRunIDs: [UUID])
+        case inboxCleanupTapped
         case inboxSendBackConfirmed(taskID: LooperTask.ID, reason: String)
         case inboxRetryTapped(LooperTask.ID)
         case inboxRevealWorktreeTapped(path: String)
@@ -369,6 +381,12 @@ struct AppFeature {
             case let .taskResponse(.success(tasks)):
                 state.isLoadingTasks = false
                 state.tasks = IdentifiedArray(uniqueElements: tasks)
+                state.hasLoadedTasks = true
+                // Steering notes queued for tasks the provider no longer
+                // returns can never be delivered — drop them.
+                state.pendingSteeringNotes = state.pendingSteeringNotes.filter { taskID, _ in
+                    state.tasks[id: taskID] != nil
+                }
                 let reconcileInterruptedTasksEffect = reconcileRecoveredInterruptedTasks(
                     state: &state,
                     updateStatus: taskProviderClient.updateTaskStatus
@@ -566,6 +584,9 @@ struct AppFeature {
                     return .none
                 }
 
+                // A finished task's queued steering notes are stale.
+                state.pendingSteeringNotes[task.id] = nil
+
                 return .merge(
                     writeTaskStatus(
                         taskID: task.id,
@@ -627,6 +648,69 @@ struct AppFeature {
                     await pipelineManagerClient.revealInFinder(path)
                 }
 
+            case .inboxCleanupTapped:
+                guard case let .maintenance(staleWorktreeRunIDs, orphanedRunIDs) =
+                    state.inboxCards[id: "maintenance"]?.kind
+                else { return .none }
+
+                // Stale worktrees still have their repo: remove via git.
+                let staleTargets: [(runID: UUID, projectPath: String, worktreePath: String)] =
+                    staleWorktreeRunIDs.compactMap { runID in
+                        guard let run = state.runs[id: runID],
+                              let worktreePath = run.worktreePath,
+                              let pipeline = state.pipeline.pipelines[id: run.pipelineID]
+                        else { return nil }
+                        return (runID, pipeline.projectPath, worktreePath)
+                    }
+                // Orphaned runs lost their repo: delete the directory, then the record.
+                let orphanedTargets: [(runID: UUID, worktreePath: String?)] =
+                    orphanedRunIDs.compactMap { runID in
+                        guard let run = state.runs[id: runID] else { return nil }
+                        return (runID, run.worktreePath)
+                    }
+
+                return .run { [
+                    removeWorktree = gitWorktreeClient.removeWorktree,
+                    removeWorktreeDirectory = gitWorktreeClient.removeWorktreeDirectory,
+                    deleteRuns = runStoreClient.deleteRuns
+                ] send in
+                    for target in staleTargets {
+                        try? await removeWorktree(target.projectPath, target.worktreePath)
+                    }
+                    for target in orphanedTargets {
+                        if let worktreePath = target.worktreePath {
+                            try? await removeWorktreeDirectory(worktreePath)
+                        }
+                    }
+                    let deletedRunIDs = orphanedTargets.map(\.runID)
+                    try? await deleteRuns(deletedRunIDs)
+                    await send(
+                        .inboxCleanupCompleted(
+                            clearedWorktreeRunIDs: staleTargets.map(\.runID),
+                            deletedRunIDs: deletedRunIDs
+                        )
+                    )
+                }
+
+            case let .inboxCleanupCompleted(clearedWorktreeRunIDs, deletedRunIDs):
+                var clearedRuns: [Run] = []
+                for runID in clearedWorktreeRunIDs {
+                    guard var run = state.runs[id: runID] else { continue }
+                    run.worktreePath = nil
+                    state.runs[id: runID] = run
+                    clearedRuns.append(run)
+                }
+                for runID in deletedRunIDs {
+                    state.runs.remove(id: runID)
+                }
+                guard !clearedRuns.isEmpty else { return .none }
+                let runsToSave = clearedRuns
+                return .run { [saveRun = runStoreClient.saveRun] _ in
+                    for run in runsToSave {
+                        try? await saveRun(run)
+                    }
+                }
+
             case let .pipeline(.createPipelineResponse(.success(pipeline))):
                 defer { state.pendingRunTaskID = nil }
 
@@ -669,6 +753,7 @@ struct AppFeature {
                 return .none
 
             case let .pipeline(.bootstrapResponse(.success(payload))):
+                state.hasLoadedPipelines = true
                 if state.selectedTaskID == nil {
                     state.selectedTaskID = taskIDMatchingSelectedPipeline(state: state)
                 }
@@ -704,6 +789,24 @@ struct AppFeature {
                 state.updatingTaskIDs.remove(update.taskID)
                 updateTaskStatus(id: update.taskID, status: update.status, state: &state)
                 return .none
+
+            case let .taskWorktreesCleaned(taskID):
+                let cleanedRuns = state.runs
+                    .filter { $0.taskID == taskID && $0.worktreePath != nil && !$0.isActive }
+                    .map { run -> Run in
+                        var cleaned = run
+                        cleaned.worktreePath = nil
+                        return cleaned
+                    }
+                guard !cleanedRuns.isEmpty else { return .none }
+                for run in cleanedRuns {
+                    state.runs[id: run.id] = run
+                }
+                return .run { [saveRun = runStoreClient.saveRun] _ in
+                    for run in cleanedRuns {
+                        try? await saveRun(run)
+                    }
+                }
 
             case let .taskStatusUpdateResponse(.failure(error)):
                 state.updatingTaskIDs.remove(error.taskID)
@@ -789,6 +892,31 @@ struct AppFeature {
                 state.taskProviderErrorMessage = nil
                 return .none
 
+            case let .pipeline(.removePipelineButtonTapped(id)):
+                // The pipeline is still in state here (removal lands with
+                // removePipelineResponse). Release everything its runs hold:
+                // agent processes, run terminal sessions, worktrees on disk.
+                guard let pipeline = state.pipeline.pipelines[id: id] else { return .none }
+                let pipelineRuns = state.runs.filter { $0.pipelineID == id }
+                guard !pipelineRuns.isEmpty else { return .none }
+
+                return .run { [
+                    cancelAgent = agentProcessClient.cancel,
+                    removeRunSession = pipelineTerminalClient.removeRunSession,
+                    removeWorktree = gitWorktreeClient.removeWorktree,
+                    projectPath = pipeline.projectPath
+                ] _ in
+                    for run in pipelineRuns {
+                        if run.isActive {
+                            await cancelAgent(run.id)
+                        }
+                        await removeRunSession(run.id)
+                        if let worktreePath = run.worktreePath {
+                            try? await removeWorktree(projectPath, worktreePath)
+                        }
+                    }
+                }
+
             case let .pipeline(.selectPipeline(id)):
                 guard let id else {
                     state.selectedTaskID = nil
@@ -804,9 +932,19 @@ struct AppFeature {
                 state.selectedTaskID = taskID(matchingPipelineID: id, state: state)
                 return .none
 
-            case .pipeline(.removePipelineResponse(_, .success)):
+            case let .pipeline(.removePipelineResponse(id, .success)):
                 state.selectedTaskID = taskIDMatchingSelectedPipeline(state: state)
-                return .none
+
+                // Prune the deleted pipeline's runs from state and the DB so
+                // they never linger as orphaned records.
+                let removedRunIDs = state.runs.filter { $0.pipelineID == id }.map(\.id)
+                guard !removedRunIDs.isEmpty else { return .none }
+                for runID in removedRunIDs {
+                    state.runs.remove(id: runID)
+                }
+                return .run { [deleteRuns = runStoreClient.deleteRuns] _ in
+                    try? await deleteRuns(removedRunIDs)
+                }
 
             case .pipeline(.createPipelineResponse(.failure)):
                 state.pendingRunTaskID = nil
@@ -1469,13 +1607,16 @@ private func cleanupAllWorktreesEffect(
     let worktreeRuns = runs.filter { $0.taskID == taskID && $0.worktreePath != nil && !$0.isActive }
     guard !worktreeRuns.isEmpty else { return .none }
 
-    return .run { _ in
+    return .run { send in
         for run in worktreeRuns {
             guard let worktreePath = run.worktreePath,
                   let pipeline = pipelines[id: run.pipelineID]
             else { continue }
             try? await removeWorktree(pipeline.projectPath, worktreePath)
         }
+        // Clear worktreePath on the affected run records so nothing keeps
+        // pointing at paths that no longer exist.
+        await send(.taskWorktreesCleaned(taskID))
     }
 }
 

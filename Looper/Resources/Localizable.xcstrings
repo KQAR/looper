@@ -3149,6 +3149,108 @@
           }
         }
       }
+    },
+    "inbox.card.maintenance.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cleanup available"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可清理残留"
+          }
+        }
+      }
+    },
+    "inbox.card.maintenance.detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld stale worktrees · %2$lld orphaned run records"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld 个失效 worktree · %2$lld 条孤儿运行记录"
+          }
+        }
+      }
+    },
+    "inbox.action.cleanup": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clean Up…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清理…"
+          }
+        }
+      }
+    },
+    "inbox.cleanup.confirm.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clean up leftovers?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清理残留？"
+          }
+        }
+      }
+    },
+    "inbox.cleanup.confirm.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Removes preserved worktrees of finished or vanished tasks and deletes run records whose pipeline is gone. This cannot be undone."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将删除已完成/已消失任务保留的 worktree，以及所属流水线已删除的运行记录。此操作不可撤销。"
+          }
+        }
+      }
+    },
+    "inbox.cleanup.confirm.action": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clean Up"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清理"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

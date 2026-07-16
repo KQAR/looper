@@ -12,6 +12,9 @@ struct InboxCard: Equatable, Identifiable, Sendable {
         case reviewRequest(taskID: LooperTask.ID)
         /// A task's latest run failed and no retry is active; worktree preserved.
         case failureEscalation(taskID: LooperTask.ID, runID: UUID, worktreePath: String?)
+        /// Aggregated leftovers: preserved worktrees whose task is done or
+        /// gone, and run records whose pipeline no longer exists.
+        case maintenance(staleWorktreeRunIDs: [UUID], orphanedRunIDs: [UUID])
     }
 
     var id: String
@@ -21,18 +24,20 @@ struct InboxCard: Equatable, Identifiable, Sendable {
     var pipelineName: String?
     var occurredAt: Date?
 
-    /// System cards float above all Run cards; failures above reviews.
+    /// System cards float above all Run cards; failures above reviews;
+    /// maintenance sinks to the bottom (low urgency).
     var sortRank: Int {
         switch kind {
         case .system: 0
         case .failureEscalation: 1
         case .reviewRequest: 2
+        case .maintenance: 3
         }
     }
 
     var taskID: LooperTask.ID? {
         switch kind {
-        case .system: nil
+        case .system, .maintenance: nil
         case let .reviewRequest(taskID): taskID
         case let .failureEscalation(taskID, _, _): taskID
         }

@@ -5,6 +5,7 @@ import Foundation
 struct RunStoreClient {
     var fetchRuns: @Sendable () async throws -> [Run]
     var saveRun: @Sendable (Run) async throws -> Void
+    var deleteRuns: @Sendable (_ ids: [UUID]) async throws -> Void
 }
 
 extension DependencyValues {
@@ -17,7 +18,8 @@ extension DependencyValues {
 extension RunStoreClient: DependencyKey {
     static let testValue = RunStoreClient(
         fetchRuns: { [] },
-        saveRun: { _ in }
+        saveRun: { _ in },
+        deleteRuns: { _ in }
     )
 
     static let liveValue = {

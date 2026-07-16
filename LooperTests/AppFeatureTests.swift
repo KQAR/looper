@@ -66,13 +66,16 @@ final class AppFeatureTests: XCTestCase {
         await store.receive(\.environmentCheckResponse) {
             $0.environmentReport = readyEnvironmentReport
         }
-        await store.receive(\.pipeline.bootstrapResponse.success)
+        await store.receive(\.pipeline.bootstrapResponse.success) {
+            $0.hasLoadedPipelines = true
+        }
         await store.receive(\.loadRuns)
         await store.receive(\.refreshTasksButtonTapped) {
             $0.isLoadingTasks = true
         }
         await store.receive(\.runResponse.success)
         await store.receive(\.taskResponse.success) {
+            $0.hasLoadedTasks = true
             $0.isLoadingTasks = false
         }
         XCTAssertFalse(store.state.isSettingsPresented)
@@ -128,6 +131,7 @@ final class AppFeatureTests: XCTestCase {
             $0.environmentReport = readyEnvironmentReport
         }
         await store.receive(\.pipeline.bootstrapResponse.success) {
+            $0.hasLoadedPipelines = true
             $0.pipeline.preferences = AppPreferences(
                 taskProviderConfiguration: providerConfiguration,
                 hasCompletedOnboarding: true
@@ -143,6 +147,7 @@ final class AppFeatureTests: XCTestCase {
         }
         await store.receive(\.runResponse.success)
         await store.receive(\.taskResponse.success) {
+            $0.hasLoadedTasks = true
             $0.isLoadingTasks = false
             $0.tasks = [firstTask, secondTask]
             $0.selectedTaskID = firstTask.id
@@ -214,6 +219,7 @@ final class AppFeatureTests: XCTestCase {
             $0.environmentReport = readyEnvironmentReport
         }
         await store.receive(\.pipeline.bootstrapResponse.success) {
+            $0.hasLoadedPipelines = true
             $0.pipeline.pipelines = [pipeline]
             $0.pipeline.selectedPipelineID = pipeline.id
             $0.pipeline.preferences.hasCompletedOnboarding = true
@@ -230,6 +236,7 @@ final class AppFeatureTests: XCTestCase {
             $0.recoveredInterruptedTaskIDs = [task.id]
         }
         await store.receive(\.taskResponse.success) {
+            $0.hasLoadedTasks = true
             $0.isLoadingTasks = false
             $0.tasks = [task]
             $0.tasks[id: task.id]?.status = .todo
@@ -381,6 +388,7 @@ final class AppFeatureTests: XCTestCase {
 
         await store.send(.pipeline(.onAppear))
         await store.receive(\.pipeline.bootstrapResponse.success) {
+            $0.hasLoadedPipelines = true
             $0.pipeline.pipelines = [pipeline]
             $0.pipeline.selectedPipelineID = pipeline.id
             $0.pipeline.preferences = AppPreferences(
@@ -408,6 +416,7 @@ final class AppFeatureTests: XCTestCase {
             $0.recoveredInterruptedTaskIDs = [persistedRun.taskID]
         }
         await store.receive(\.taskResponse.success) {
+            $0.hasLoadedTasks = true
             $0.isLoadingTasks = false
         }
     }
@@ -787,6 +796,7 @@ final class AppFeatureTests: XCTestCase {
             $0.isLoadingTasks = true
         }
         await store.receive(\.taskResponse.success) {
+            $0.hasLoadedTasks = true
             $0.isLoadingTasks = false
         }
 
@@ -837,6 +847,7 @@ final class AppFeatureTests: XCTestCase {
             $0.isLoadingTasks = true
         }
         await store.receive(\.taskResponse.success) {
+            $0.hasLoadedTasks = true
             $0.isLoadingTasks = false
         }
 
@@ -1626,6 +1637,10 @@ final class AppFeatureTests: XCTestCase {
         await store.receive(\.taskStatusUpdateResponse.success) {
             $0.updatingTaskIDs = []
             $0.tasks[id: task.id]?.status = .done
+        }
+        await store.receive(\.taskWorktreesCleaned) {
+            $0.runs[id: failedRun.id]?.worktreePath = nil
+            $0.runs[id: succeededRun.id]?.worktreePath = nil
         }
 
         let removed = await recorder.value()

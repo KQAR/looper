@@ -8,6 +8,9 @@ extension RunStoreClient {
             },
             saveRun: { run in
                 try await database.saveRun(run)
+            },
+            deleteRuns: { ids in
+                try await database.deleteRuns(ids: ids)
             }
         )
     }

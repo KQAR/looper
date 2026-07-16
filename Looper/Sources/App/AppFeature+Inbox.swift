@@ -77,12 +77,53 @@ extension AppFeature.State {
             }
         }
 
+        if let maintenance = maintenanceCard {
+            cards.append(maintenance)
+        }
+
         cards.sort { lhs, rhs in
             if lhs.sortRank != rhs.sortRank { return lhs.sortRank < rhs.sortRank }
             return (lhs.occurredAt ?? .distantPast) > (rhs.occurredAt ?? .distantPast)
         }
 
         return IdentifiedArray(uniqueElements: cards)
+    }
+
+    /// Leftovers that structured cleanup missed (crashes, legacy data):
+    /// preserved worktrees whose task is done or vanished, and run records
+    /// whose pipeline was deleted. Silent until both sources have loaded.
+    private var maintenanceCard: InboxCard? {
+        guard hasLoadedPipelines, hasLoadedTasks else { return nil }
+
+        var staleWorktreeRunIDs: [UUID] = []
+        var orphanedRunIDs: [UUID] = []
+
+        for run in runs where !run.isActive {
+            if pipeline.pipelines[id: run.pipelineID] == nil {
+                orphanedRunIDs.append(run.id)
+            } else if run.worktreePath != nil {
+                let task = tasks[id: run.taskID]
+                if task == nil || task?.status == .done {
+                    staleWorktreeRunIDs.append(run.id)
+                }
+            }
+        }
+
+        guard !staleWorktreeRunIDs.isEmpty || !orphanedRunIDs.isEmpty else { return nil }
+
+        return InboxCard(
+            id: "maintenance",
+            kind: .maintenance(
+                staleWorktreeRunIDs: staleWorktreeRunIDs,
+                orphanedRunIDs: orphanedRunIDs
+            ),
+            title: String(localized: "inbox.card.maintenance.title", bundle: .localized),
+            detail: String(
+                format: String(localized: "inbox.card.maintenance.detail", bundle: .localized),
+                staleWorktreeRunIDs.count,
+                orphanedRunIDs.count
+            )
+        )
     }
 
     var inboxQuietRunCount: Int {
