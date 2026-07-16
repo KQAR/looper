@@ -7,13 +7,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Looper is a personal macOS 26+ app for task-driven local AI development orchestration. It keeps long-lived project pipelines warm, accepts tasks from pluggable providers, and runs Claude Code in embedded terminals. Liquid Glass UI style.
+Looper is a personal macOS 26+ app: a **Loop Engineering workbench** for a single owner driving AI-native development. It keeps long-lived project pipelines warm, accepts tasks from pluggable providers, runs Claude Code in embedded terminals, and — this is the differentiator — gates completion on evidence (tests, independent verify) and collects failure signals for outer-loop improvement. Parallel throughput is table stakes, not the moat. Liquid Glass UI style.
+
+[`ROADMAP.md`](ROADMAP.md) is the single source of truth for positioning and iteration order. Read it before making scope or prioritization decisions.
 
 **Stack**: SwiftUI + TCA, Tuist, Swift 6, SPM, libghostty-spm, macOS 26+
 
 ## Design System
 
-[`DESIGN.md`](DESIGN.md) is the single source of truth for all UI design and refactoring. It is derived from Apple's HIG (macOS 26, Liquid Glass) — **not** from existing code. When a current view conflicts with DESIGN.md, the view is wrong: refactor toward the spec, never propagate legacy styling. Read DESIGN.md before writing or reviewing any view code.
+Three docs govern the product; each wins over code in its domain:
+
+- [`ROADMAP.md`](ROADMAP.md) — positioning and iteration order
+- [`DESIGN.md`](DESIGN.md) — visual system (colors, type, materials), derived from Apple's HIG (macOS 26, Liquid Glass), **not** from existing code
+- [`INTERACTION.md`](INTERACTION.md) — interaction architecture: attention routing (Inbox / Live Wall / Run Cockpit), intervention levels, steering notes
+
+When a current view conflicts with these specs, the view is wrong: refactor toward the spec, never propagate legacy styling. Read DESIGN.md and INTERACTION.md before writing or reviewing any view code.
 
 ## Build Commands
 
@@ -29,10 +37,11 @@ tuist edit                    # Edit Tuist manifests in Xcode
 
 Use `XcodeBuildMCP` MCP server for Xcode build diagnostics, simulator management, and project inspection.
 
-## MVP Scope
+## Scope
 
-**In scope**: Local Tasks provider, Feishu provider, Claude Code agent, single repo per pipeline, manual refresh + configurable polling, automatic task status writeback
-**Deferred**: TAPD/Linear providers, Codex, multi-repo tasks, review agent, memory engine, AI coordinator, visual workflow builder
+**In scope now**: Local Tasks provider, Feishu provider, Claude Code agent, single repo per pipeline, manual refresh + configurable polling, automatic task status writeback
+**Next (ordered — see [`ROADMAP.md`](ROADMAP.md))**: M1 evidence-gated completion (gate commands + verify agent + evidence bundle), M2 inner-loop auto-retry, M3 failure-signal observability, M4 pipeline knowledge assets
+**Deferred**: TAPD/Linear providers, Codex, multi-repo tasks, AI coordinator, visual workflow builder
 
 ## Core Concepts
 
@@ -62,6 +71,7 @@ Task Provider ──fetch──▶ Task ──routed into──▶ Pipeline
 States: `todo` → `inProgress` → `inReview` → `done`
 - Both agent exit and user action can trigger state transitions
 - Agent exit 0 → `inReview`; agent crash/timeout → back to `todo`
+  - **Interim behavior.** Target (ROADMAP.md M1): promotion to `inReview` requires gates green + verify verdict; exit code alone never promotes. `inReview → todo` rollback is recorded as a failure signal.
 - `inReview` can be returned to `todo` (rollback) or approved to `done`
 - Task provider decides how tasks are loaded and where status writes back
 - Pipeline persists across tasks; runs are short-lived
@@ -115,7 +125,7 @@ surface.sendText("claude --task \"...\"\n")
 ### Data Pipeline (Agent <-> App)
 
 - **PTY output** — terminal rendering and user interaction via libghostty-spm
-- **Structured channel** (MCP / filesystem / TBD) — agent status, task progress
+- **Structured channel** — filesystem JSON contract (decided, see ROADMAP.md): agent and gate runner write reports to a fixed worktree path (e.g. `.looper/report.json`); Looper watches it. Carries gate results, verify verdicts, failure reports. MCP may replace the transport later.
 
 ## Architecture
 
